@@ -1,25 +1,23 @@
-// content.js
+// content.js - Atualizado com suporte a metadados e inserção
 
-// helper para chamar background
 function bgSend(msg) {
   return new Promise(resolve => chrome.runtime.sendMessage(msg, resolve));
 }
 
-// armazena sessão localmente
 window.__SF_SESSION__ = null;
 window.__SF_HOST__ = null;
 
 async function ensureSession() {
-  // 1) pega host provável
   const host = await bgSend({ message: "getSfHost", url: window.location.href });
   window.__SF_HOST__ = host || window.location.hostname;
-  // 2) pede session (cookie sid) para o background
+  
   const session = await bgSend({ message: "getSession", sfHost: window.__SF_HOST__ });
   if (!session) {
-    console.warn("Não foi possível obter session via cookies (getSession retornou null).");
+    console.warn("Não foi possível obter session via cookies");
     return null;
   }
-  window.__SF_SESSION__ = session; // { key, hostname }
+  
+  window.__SF_SESSION__ = session;
   return session;
 }
 
@@ -29,6 +27,9 @@ function instanceUrlFromSession(session) {
   return `${window.location.protocol}//${h.replace(/^\./, "")}`;
 }
 
+// ============================================================
+// SOQL Query
+// ============================================================
 async function runSoql(query) {
   if (!window.__SF_SESSION__) {
     await ensureSession();
@@ -50,13 +51,9 @@ async function runSoql(query) {
     throw new Error(result.error || JSON.stringify(result.data));
   }
 
-  // revalida se deu INVALID_SESSION_ID e tenta nova sessão
   const data = result.data;
-  if (
-    Array.isArray(data) &&
-    data[0]?.errorCode === "INVALID_SESSION_ID"
-  ) {
-    console.warn("INVALID_SESSION_ID — tentando renovar sessão...");
+  if (Array.isArray(data) && data[0]?.errorCode === "INVALID_SESSION_ID") {
+    console.warn("INVALID_SESSION_ID — renovando sessão...");
     await ensureSession();
     return runSoql(query);
   }
@@ -64,57 +61,194 @@ async function runSoql(query) {
   return data;
 }
 
-// CRUD genérico: method = 'PATCH'|'POST'|'DELETE'
-async function runCrud({ method, sobject, id = "", body = null }) {
-  if (!window.__SF_SESSION__) await ensureSession();
-  if (!window.__SF_SESSION__) throw new Error("session not available");
+// ============================================================
+// Buscar Metadados do Objeto
+// ============================================================
+async function getObjectMetadata(objectName) {
+  if (!window.__SF_SESSION__) {
+    await ensureSession();
+    if (!window.__SF_SESSION__) throw new Error("Session not available");
+  }
 
   const session = window.__SF_SESSION__;
-  const instanceUrl = instanceUrlFromSession(session);
-  const sid = session.key;
+  const path = `/services/data/v61.0/sobjects/${encodeURIComponent(objectName)}/describe`;
 
-  const url = id
-    ? `${instanceUrl}/services/data/v61.0/sobjects/${encodeURIComponent(sobject)}/${encodeURIComponent(id)}`
-    : `${instanceUrl}/services/data/v61.0/sobjects/${encodeURIComponent(sobject)}/`;
+  console.log(`📚 Buscando metadados de ${objectName}...`);
 
-  const opts = {
-    method,
-    headers: { Authorization: `Bearer ${sid}`, "Content-Type": "application/json" },
-    credentials: "include"
-  };
-  if (body) opts.body = JSON.stringify(body);
+  const result = await bgSend({
+    message: "callApi",
+    session,
+    path,
+    method: "GET"
+  });
 
-  const res = await fetch(url, opts);
-  const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { status: res.status, body: text };
+  if (!result.ok) {
+    throw new Error(result.error || JSON.stringify(result.data));
   }
+
+  // Retorna apenas os campos relevantes
+  const metadata = result.data;
+  return {
+    name: metadata.name,
+    label: metadata.label,
+    fields: metadata.fields.map(f => ({
+      name: f.name,
+      label: f.label,
+      type: f.type,
+      length: f.length,
+      precision: f.precision,
+      scale: f.scale,
+      nillable: f.nillable,
+      createable: f.createable,
+      updateable: f.updateable,
+      defaultedOnCreate: f.defaultedOnCreate,
+      picklistValues: f.picklistValues,
+      referenceTo: f.referenceTo
+    }))
+  };
 }
 
-// listener para mensagens do popup/background
+// ============================================================
+// Inserir Registro
+// ============================================================
+async function insertRecord(objectName, fields) {
+  if (!window.__SF_SESSION__) {
+    await ensureSession();
+    if (!window.__SF_SESSION__) throw new Error("Session not available");
+  }
+
+  const session = window.__SF_SESSION__;
+  const path = `/services/data/v61.0/sobjects/${encodeURIComponent(objectName)}/`;
+
+  console.log(`💾 Inserindo ${objectName}:`, fields);
+
+  const result = await bgSend({
+    message: "callApi",
+    session,
+    path,
+    method: "POST",
+    body: fields
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error || JSON.stringify(result.data));
+  }
+
+  // Verifica se houve erro na resposta
+  const data = result.data;
+  if (Array.isArray(data) && data[0]?.errorCode) {
+    throw data; // Lança o array de erros do Salesforce
+  }
+
+  return data;
+}
+
+// ============================================================
+// Atualizar Registro
+// ============================================================
+async function updateRecord(objectName, id, fields) {
+  if (!window.__SF_SESSION__) {
+    await ensureSession();
+    if (!window.__SF_SESSION__) throw new Error("Session not available");
+  }
+
+  const session = window.__SF_SESSION__;
+  const path = `/services/data/v61.0/sobjects/${encodeURIComponent(objectName)}/${encodeURIComponent(id)}`;
+
+  console.log(`🔄 Atualizando ${objectName} (${id}):`, fields);
+
+  const result = await bgSend({
+    message: "callApi",
+    session,
+    path,
+    method: "PATCH",
+    body: fields
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error || JSON.stringify(result.data));
+  }
+
+  const data = result.data;
+  if (Array.isArray(data) && data[0]?.errorCode) {
+    throw data;
+  }
+
+  return data;
+}
+
+// ============================================================
+// Deletar Registro
+// ============================================================
+async function deleteRecord(objectName, id) {
+  if (!window.__SF_SESSION__) {
+    await ensureSession();
+    if (!window.__SF_SESSION__) throw new Error("Session not available");
+  }
+
+  const session = window.__SF_SESSION__;
+  const path = `/services/data/v61.0/sobjects/${encodeURIComponent(objectName)}/${encodeURIComponent(id)}`;
+
+  console.log(`🗑️ Deletando ${objectName} (${id})`);
+
+  const result = await bgSend({
+    message: "callApi",
+    session,
+    path,
+    method: "DELETE"
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error || JSON.stringify(result.data));
+  }
+
+  return result.data;
+}
+
+// ============================================================
+// Message Listener
+// ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "RUN_SOQL") {
         const data = await runSoql(msg.query);
-        // usa runtime.sendMessage para responder ao popup/background
         chrome.runtime.sendMessage({ type: "SOQL_RESULT", data });
         sendResponse({ ok: true });
         return;
       }
-      if (msg.type === "CRUD") {
-        const result = await runCrud(msg.payload);
-        chrome.runtime.sendMessage({ type: "CRUD_RESULT", result });
-        sendResponse({ ok: true });
+
+      if (msg.type === "GET_METADATA") {
+        const metadata = await getObjectMetadata(msg.objectName);
+        sendResponse({ ok: true, data: metadata });
         return;
       }
+
+      if (msg.type === "INSERT_RECORD") {
+        const result = await insertRecord(msg.objectName, msg.fields);
+        sendResponse({ ok: true, data: result });
+        return;
+      }
+
+      if (msg.type === "UPDATE_RECORD") {
+        const result = await updateRecord(msg.objectName, msg.id, msg.fields);
+        sendResponse({ ok: true, data: result });
+        return;
+      }
+
+      if (msg.type === "DELETE_RECORD") {
+        const result = await deleteRecord(msg.objectName, msg.id);
+        sendResponse({ ok: true, data: result });
+        return;
+      }
+
     } catch (err) {
-      chrome.runtime.sendMessage({ type: "SOQL_ERROR", error: String(err) });
+      console.error("❌ Erro no content script:", err);
       sendResponse({ ok: false, error: String(err) });
     }
   })();
 
   return true; // keep channel open
 });
+
+console.log("✅ Salesforce AI Assistant content script carregado");
