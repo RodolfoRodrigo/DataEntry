@@ -65,15 +65,21 @@ async function runSoql(query) {
 // Buscar Metadados do Objeto
 // ============================================================
 async function getObjectMetadata(objectName) {
+  console.log(`🔍 getObjectMetadata chamado para: ${objectName}`);
+  
   if (!window.__SF_SESSION__) {
+    console.log('⚠️ Sessão não encontrada, tentando obter...');
     await ensureSession();
-    if (!window.__SF_SESSION__) throw new Error("Session not available");
+    if (!window.__SF_SESSION__) {
+      throw new Error("Session not available. Certifique-se de estar logado no Salesforce.");
+    }
   }
 
   const session = window.__SF_SESSION__;
   const path = `/services/data/v61.0/sobjects/${encodeURIComponent(objectName)}/describe`;
 
   console.log(`📚 Buscando metadados de ${objectName}...`);
+  console.log(`📍 URL: https://${session.hostname}${path}`);
 
   const result = await bgSend({
     message: "callApi",
@@ -82,12 +88,24 @@ async function getObjectMetadata(objectName) {
     method: "GET"
   });
 
+  console.log('📦 Resultado da API:', result);
+
   if (!result.ok) {
+    console.error('❌ Erro na resposta da API:', result);
     throw new Error(result.error || JSON.stringify(result.data));
+  }
+
+  // Verifica se retornou erro do Salesforce
+  const data = result.data;
+  if (Array.isArray(data) && data[0]?.errorCode) {
+    console.error('❌ Erro do Salesforce:', data);
+    throw new Error(`Salesforce Error: ${data[0].message}`);
   }
 
   // Retorna apenas os campos relevantes
   const metadata = result.data;
+  console.log(`✅ Metadados obtidos para ${objectName}:`, metadata.name);
+  
   return {
     name: metadata.name,
     label: metadata.label,
@@ -209,9 +227,12 @@ async function deleteRecord(objectName, id) {
 // Message Listener
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  console.log('📨 Mensagem recebida no content script:', msg.type);
+  
   (async () => {
     try {
       if (msg.type === "RUN_SOQL") {
+        console.log('🔍 Executando SOQL:', msg.query);
         const data = await runSoql(msg.query);
         chrome.runtime.sendMessage({ type: "SOQL_RESULT", data });
         sendResponse({ ok: true });
@@ -219,28 +240,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       if (msg.type === "GET_METADATA") {
+        console.log('📚 Requisição de metadados para:', msg.objectName);
         const metadata = await getObjectMetadata(msg.objectName);
+        console.log('✅ Enviando metadados de volta');
         sendResponse({ ok: true, data: metadata });
         return;
       }
 
       if (msg.type === "INSERT_RECORD") {
+        console.log('💾 Inserindo registro:', msg.objectName);
         const result = await insertRecord(msg.objectName, msg.fields);
         sendResponse({ ok: true, data: result });
         return;
       }
 
       if (msg.type === "UPDATE_RECORD") {
+        console.log('🔄 Atualizando registro:', msg.objectName, msg.id);
         const result = await updateRecord(msg.objectName, msg.id, msg.fields);
         sendResponse({ ok: true, data: result });
         return;
       }
 
       if (msg.type === "DELETE_RECORD") {
+        console.log('🗑️ Deletando registro:', msg.objectName, msg.id);
         const result = await deleteRecord(msg.objectName, msg.id);
         sendResponse({ ok: true, data: result });
         return;
       }
+
+      console.warn('⚠️ Tipo de mensagem desconhecido:', msg.type);
+      sendResponse({ ok: false, error: 'Tipo de mensagem desconhecido' });
 
     } catch (err) {
       console.error("❌ Erro no content script:", err);

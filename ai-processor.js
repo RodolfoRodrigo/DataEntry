@@ -67,15 +67,17 @@ class AIProcessor {
         content: `Você é um especialista em Salesforce. Analise a transcrição e identifique:
 1. Qual objeto Salesforce está sendo mencionado (Account, Contact, Opportunity, Case, Lead, etc)
 2. Extraia todos os campos e valores mencionados
-3. Identifique se há campos obrigatórios faltando
+
+IMPORTANTE: 
+- Se o usuário mencionar "nome completo" ou "nome" para Contact/Lead, sempre separe em FirstName e LastName
+- Nunca use o campo "Name" diretamente em Contact/Lead
+- Para outros objetos, use "Name" normalmente
 
 Retorne JSON no formato:
 {
   "object": "NomeDoObjeto",
   "fields": {"FieldName": "valor", ...},
-  "confidence": 0.95,
-  "missing_required": ["campo1", "campo2"],
-  "questions": ["Pergunta para esclarecer campo X?"]
+  "confidence": 0.95
 }`
       },
       {
@@ -97,23 +99,117 @@ Retorne JSON no formato:
     // busca via API do Salesforce
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
+    if (!tab) {
+      throw new Error('Nenhuma aba ativa encontrada. Abra uma página do Salesforce.');
+    }
+
+    console.log(`📡 Enviando requisição de metadados para ${objectName}...`);
+    
     return new Promise((resolve, reject) => {
       chrome.tabs.sendMessage(tab.id, {
         type: 'GET_METADATA',
         objectName
       }, (response) => {
-        if (response?.ok) {
+        if (chrome.runtime.lastError) {
+          console.error('❌ Erro de runtime:', chrome.runtime.lastError);
+          reject(new Error(`Erro de comunicação: ${chrome.runtime.lastError.message}. Certifique-se de estar em uma página do Salesforce.`));
+          return;
+        }
+
+        if (!response) {
+          console.error('❌ Resposta vazia do content script');
+          reject(new Error('Sem resposta do Salesforce. Recarregue a página do Salesforce e tente novamente.'));
+          return;
+        }
+
+        if (response.ok) {
           const metadata = response.data;
+          
+          // Cria chunks do metadata para RAG
+          console.log('🧩 Criando chunks do metadata...');
+          window.metadataChunker.chunkMetadata(objectName, metadata);
+          
           // salva no cache
           this.metadataCache.set(objectName, metadata);
           this.saveMetadataCache();
-          console.log(`✅ Metadados de ${objectName} salvos no cache`);
+          console.log(`✅ Metadados de ${objectName} salvos no cache e em chunks`);
           resolve(metadata);
         } else {
-          reject(new Error(response?.error || 'Erro ao buscar metadados'));
+          console.error('❌ Erro na resposta:', response.error);
+          reject(new Error(response.error || 'Erro ao buscar metadados do Salesforce'));
         }
       });
     });
+  }
+
+  /**
+   * NOVO: Valida e enriquece campos usando contexto da org
+   */
+  async validateAndEnrichFields(objectName, fields, transcription) {
+    // Busca metadados se ainda não tiver
+    let metadata = this.metadataCache.get(objectName);
+    if (!metadata) {
+      metadata = await this.getObjectMetadata(objectName);
+    }
+
+    // Busca chunks relevantes baseado na transcrição
+    const relevantChunks = window.metadataChunker.searchRelevantChunks(objectName, transcription);
+    const context = window.metadataChunker.generateCompactContext(objectName, relevantChunks);
+
+    console.log('📋 Contexto compacto gerado:', context);
+
+    // Usa GPT com contexto da org para validar e enriquecer
+    const messages = [
+      {
+        role: 'system',
+        content: `Você é um assistente Salesforce especializado. Você tem acesso aos metadados REAIS da org do usuário.
+
+CONTEXTO DA ORG:
+Objeto: ${context.objectLabel} (${context.object})
+
+CAMPOS OBRIGATÓRIOS:
+${JSON.stringify(context.requiredFields, null, 2)}
+
+CAMPOS DISPONÍVEIS:
+${JSON.stringify(context.availableFields, null, 2)}
+
+REGRAS DE VALIDAÇÃO:
+${JSON.stringify(context.validationRules, null, 2)}
+
+CAMPOS PICKLIST:
+${JSON.stringify(context.picklistFields, null, 2)}
+
+CAMPOS LOOKUP:
+${JSON.stringify(context.lookupFields, null, 2)}
+
+INSTRUÇÕES:
+1. Valide os campos fornecidos contra os metadados REAIS da org
+2. Corrija automaticamente erros óbvios (ex: "Nome Completo" → FirstName + LastName para Contact)
+3. Preencha campos obrigatórios faltantes com valores padrão quando possível
+4. Ajuste valores de picklist para os valores corretos da org
+5. NUNCA pergunte coisas óbvias como "pode separar o nome?"
+6. Seja inteligente e resolva problemas automaticamente
+
+Retorne JSON:
+{
+  "fields": {"FieldName": "valor corrigido"},
+  "autoCorrections": ["O que foi corrigido automaticamente"],
+  "missingRequired": [{"name": "FieldName", "label": "Label"}],
+  "invalidValues": [{"field": "FieldName", "reason": "motivo", "suggestion": "sugestão"}],
+  "needsUserInput": [{"field": "FieldName", "question": "pergunta"}]
+}`
+      },
+      {
+        role: 'user',
+        content: `Transcrição original: ${transcription}
+
+Campos extraídos: ${JSON.stringify(fields, null, 2)}
+
+Valide e enriqueça esses dados usando os metadados da org.`
+      }
+    ];
+
+    return await this.callGPT(messages);
   }
 
   async validateFields(objectName, fields, metadata) {

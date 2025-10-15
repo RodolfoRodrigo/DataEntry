@@ -84,26 +84,41 @@ async function processTranscription() {
     appState.objectName = identified.object;
     appState.fields = identified.fields;
     
-    addChatMessage('ai', `Identifiquei que você quer criar um **${identified.object}** com os seguintes dados:\n\n${formatFields(identified.fields)}`);
+    addChatMessage('ai', `Identifiquei que você quer criar um **${identified.object}**`);
     
-    // PASSO 2: Buscar metadados do objeto
-    showStatus('info', `📚 Buscando regras do objeto ${identified.object}...`);
+    // PASSO 2: Buscar metadados do objeto (cria chunks automaticamente)
+    showStatus('info', `📚 Consultando estrutura do ${identified.object} na sua org...`);
     appState.metadata = await window.aiProcessor.getObjectMetadata(identified.object);
     
-    // PASSO 3: Validar campos
-    showStatus('info', '✅ Validando dados...');
-    appState.validationResult = await window.aiProcessor.validateFields(
+    // PASSO 3: Validar e enriquecer usando contexto da org
+    showStatus('info', '🤖 Validando dados com base na configuração da sua org...');
+    const enriched = await window.aiProcessor.validateAndEnrichFields(
       identified.object,
       identified.fields,
-      appState.metadata
+      transcription
     );
     
-    if (!appState.validationResult.valid) {
-      // Tem problemas - precisa correção
-      await handleValidationErrors();
+    console.log('✨ Dados enriquecidos:', enriched);
+    
+    // Atualiza campos com correções automáticas
+    appState.fields = enriched.fields;
+    
+    // Mostra correções automáticas
+    if (enriched.autoCorrections && enriched.autoCorrections.length > 0) {
+      addChatMessage('ai', `🔧 **Correções automáticas aplicadas:**\n${enriched.autoCorrections.map(c => `• ${c}`).join('\n')}`);
+    }
+    
+    // Verifica se ainda falta algo
+    const hasIssues = (enriched.missingRequired && enriched.missingRequired.length > 0) ||
+                      (enriched.invalidValues && enriched.invalidValues.length > 0) ||
+                      (enriched.needsUserInput && enriched.needsUserInput.length > 0);
+    
+    if (hasIssues) {
+      // Precisa de input do usuário
+      await handleEnrichmentIssues(enriched);
     } else {
-      // Tudo OK - pode inserir
-      await showFieldEditor();
+      // Tudo OK - mostra resumo e pede confirmação
+      await showConfirmationSummary();
     }
     
   } catch (error) {
@@ -115,28 +130,55 @@ async function processTranscription() {
   }
 }
 
-async function handleValidationErrors() {
+async function handleEnrichmentIssues(enriched) {
   appState.step = 'correcting';
   
-  showStatus('warning', '⚠️ Alguns campos precisam de atenção...');
+  const issues = [];
   
-  // Pede ao GPT para fazer perguntas inteligentes
-  const correction = await window.aiProcessor.askForCorrections(
-    appState.objectName,
-    appState.fields,
-    appState.validationResult,
-    appState.metadata
-  );
-  
-  console.log('🤔 Correções sugeridas:', correction);
-  
-  addChatMessage('ai', correction.explanation);
-  
-  if (correction.questions && correction.questions.length > 0) {
-    appState.questions = correction.questions;
-    addChatMessage('ai', correction.questions.join('\n\n'));
-    showCorrectionInput();
+  // Campos obrigatórios faltando
+  if (enriched.missingRequired && enriched.missingRequired.length > 0) {
+    issues.push(`**⚠️ Campos obrigatórios faltando:**\n${enriched.missingRequired.map(f => `• ${f.label} (${f.name})`).join('\n')}`);
   }
+  
+  // Valores inválidos
+  if (enriched.invalidValues && enriched.invalidValues.length > 0) {
+    issues.push(`**❌ Valores inválidos:**\n${enriched.invalidValues.map(v => `• ${v.field}: ${v.reason}${v.suggestion ? `\n  Sugestão: ${v.suggestion}` : ''}`).join('\n')}`);
+  }
+  
+  // Precisa de input do usuário
+  if (enriched.needsUserInput && enriched.needsUserInput.length > 0) {
+    const questions = enriched.needsUserInput.map(q => q.question);
+    appState.questions = questions;
+    
+    showStatus('warning', '⚠️ Preciso de mais informações...');
+    addChatMessage('ai', issues.join('\n\n'));
+    addChatMessage('ai', questions.join('\n\n'));
+    showCorrectionInput();
+    return;
+  }
+  
+  // Se só tem campos faltando mas sem perguntas, mostra o resumo
+  showStatus('warning', '⚠️ Alguns campos obrigatórios estão faltando');
+  addChatMessage('ai', issues.join('\n\n'));
+  await showFieldEditor();
+}
+
+async function showConfirmationSummary() {
+  appState.step = 'ready';
+  
+  showStatus('success', '✅ Dados prontos!');
+  
+  const summary = Object.entries(appState.fields)
+    .map(([key, value]) => {
+      const fieldMeta = appState.metadata.fields.find(f => f.name === key);
+      const label = fieldMeta ? fieldMeta.label : key;
+      return `• **${label}**: ${value}`;
+    })
+    .join('\n');
+  
+  addChatMessage('ai', `📋 **Resumo dos dados:**\n\n${summary}\n\n✅ **Estes dados estão corretos para inserir?**`);
+  
+  await showFieldEditor();
 }
 
 async function submitUserResponse() {
@@ -152,40 +194,62 @@ async function submitUserResponse() {
     addChatMessage('user', response);
     document.getElementById('userResponse').value = '';
     
-    showStatus('info', '🤔 Processando sua resposta...');
+    showStatus('info', '🤖 Processando sua resposta com contexto da org...');
     
-    // Processa resposta do usuário
-    const updated = await window.aiProcessor.processUserResponse(
-      response,
-      appState.fields,
-      appState.questions,
-      appState.metadata
-    );
+    // Busca chunks relevantes para a resposta
+    const relevantChunks = window.metadataChunker.searchRelevantChunks(appState.objectName, response);
+    const context = window.metadataChunker.generateCompactContext(appState.objectName, relevantChunks);
     
+    // Processa resposta com contexto da org
+    const messages = [
+      {
+        role: 'system',
+        content: `Você é um assistente Salesforce. Baseado na resposta do usuário e nos metadados REAIS da org, atualize os campos.
+
+CONTEXTO DA ORG:
+${JSON.stringify(context, null, 2)}
+
+CAMPOS ATUAIS:
+${JSON.stringify(appState.fields, null, 2)}
+
+PERGUNTAS FEITAS:
+${appState.questions.join('\n')}
+
+Retorne JSON:
+{
+  "fields": {"FieldName": "valor atualizado"},
+  "changes": ["Descrição das mudanças"],
+  "allResolved": true/false
+}`
+      },
+      {
+        role: 'user',
+        content: response
+      }
+    ];
+    
+    const updated = await window.aiProcessor.callGPT(messages);
     console.log('🔄 Campos atualizados:', updated);
     
     // Atualiza campos
     appState.fields = { ...appState.fields, ...updated.fields };
     
     if (updated.changes && updated.changes.length > 0) {
-      addChatMessage('ai', `Atualizei os seguintes campos:\n${updated.changes.join('\n')}`);
+      addChatMessage('ai', `✅ **Atualizado:**\n${updated.changes.map(c => `• ${c}`).join('\n')}`);
     }
     
-    // Valida novamente
-    appState.validationResult = await window.aiProcessor.validateFields(
-      appState.objectName,
-      appState.fields,
-      appState.metadata
-    );
-    
-    if (!appState.validationResult.valid) {
-      // Ainda tem problemas
-      await handleValidationErrors();
-    } else {
-      // Agora está OK
+    if (updated.allResolved) {
+      // Tudo resolvido
       hideCorrectionInput();
-      addChatMessage('ai', '✅ Perfeito! Todos os dados estão corretos agora.');
-      await showFieldEditor();
+      await showConfirmationSummary();
+    } else {
+      // Ainda precisa de mais info
+      const revalidated = await window.aiProcessor.validateAndEnrichFields(
+        appState.objectName,
+        appState.fields,
+        JSON.stringify(appState.fields)
+      );
+      await handleEnrichmentIssues(revalidated);
     }
     
   } catch (error) {
