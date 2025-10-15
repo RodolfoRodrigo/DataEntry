@@ -51,10 +51,12 @@
         "https://*.lightning.force.com/*",
         "https://*.visual.force.com/*",
         "https://*.cloudforce.com/*",
-        "https://*.force.com/*"
+        "https://*.force.com/*",
+        "https://*.my.salesforce.com/*"
       ],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   
