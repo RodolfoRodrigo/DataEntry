@@ -1,7 +1,7 @@
-// popup.js - Gerencia toda a interface e fluxo de IA
+// popup.js - Interface simplificada com dropdowns
 
 const appState = {
-  step: 'idle', // idle, identifying, validating, correcting, ready, inserting
+  step: 'idle',
   objectName: null,
   fields: {},
   metadata: null,
@@ -13,7 +13,6 @@ const appState = {
 // INICIALIZAÇÃO
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-  // Aguarda o aiProcessor estar disponível
   if (!window.aiProcessor) {
     showStatus('error', '❌ Erro ao carregar o processador de IA');
     return;
@@ -39,6 +38,7 @@ function setupEventListeners() {
   document.getElementById('submitResponse').addEventListener('click', submitUserResponse);
   document.getElementById('confirmInsert').addEventListener('click', confirmInsert);
   document.getElementById('cancelInsert').addEventListener('click', cancelProcess);
+  document.getElementById('addFieldBtn').addEventListener('click', addNewFieldRow);
   
   // SOQL
   document.getElementById('runQuery').addEventListener('click', runSOQL);
@@ -86,11 +86,11 @@ async function processTranscription() {
     
     addChatMessage('ai', `Identifiquei que você quer criar um **${identified.object}**`);
     
-    // PASSO 2: Buscar metadados do objeto (cria chunks automaticamente)
+    // PASSO 2: Buscar metadados do objeto
     showStatus('info', `📚 Consultando estrutura do ${identified.object} na sua org...`);
     appState.metadata = await window.aiProcessor.getObjectMetadata(identified.object);
     
-    // PASSO 3: Validar e enriquecer usando contexto da org
+    // PASSO 3: Validar e enriquecer
     showStatus('info', '🤖 Validando dados com base na configuração da sua org...');
     const enriched = await window.aiProcessor.validateAndEnrichFields(
       identified.object,
@@ -100,7 +100,7 @@ async function processTranscription() {
     
     console.log('✨ Dados enriquecidos:', enriched);
     
-    // Atualiza campos com correções automáticas
+    // Atualiza campos
     appState.fields = enriched.fields;
     
     // Mostra correções automáticas
@@ -108,16 +108,14 @@ async function processTranscription() {
       addChatMessage('ai', `🔧 **Correções automáticas aplicadas:**\n${enriched.autoCorrections.map(c => `• ${c}`).join('\n')}`);
     }
     
-    // Verifica se ainda falta algo
+    // Verifica se há issues
     const hasIssues = (enriched.missingRequired && enriched.missingRequired.length > 0) ||
                       (enriched.invalidValues && enriched.invalidValues.length > 0) ||
                       (enriched.needsUserInput && enriched.needsUserInput.length > 0);
     
     if (hasIssues) {
-      // Precisa de input do usuário
       await handleEnrichmentIssues(enriched);
     } else {
-      // Tudo OK - mostra resumo e pede confirmação
       await showConfirmationSummary();
     }
     
@@ -135,17 +133,14 @@ async function handleEnrichmentIssues(enriched) {
   
   const issues = [];
   
-  // Campos obrigatórios faltando
   if (enriched.missingRequired && enriched.missingRequired.length > 0) {
     issues.push(`**⚠️ Campos obrigatórios faltando:**\n${enriched.missingRequired.map(f => `• ${f.label} (${f.name})`).join('\n')}`);
   }
   
-  // Valores inválidos
   if (enriched.invalidValues && enriched.invalidValues.length > 0) {
     issues.push(`**❌ Valores inválidos:**\n${enriched.invalidValues.map(v => `• ${v.field}: ${v.reason}${v.suggestion ? `\n  Sugestão: ${v.suggestion}` : ''}`).join('\n')}`);
   }
   
-  // Precisa de input do usuário
   if (enriched.needsUserInput && enriched.needsUserInput.length > 0) {
     const questions = enriched.needsUserInput.map(q => q.question);
     appState.questions = questions;
@@ -157,7 +152,6 @@ async function handleEnrichmentIssues(enriched) {
     return;
   }
   
-  // Se só tem campos faltando mas sem perguntas, mostra o resumo
   showStatus('warning', '⚠️ Alguns campos obrigatórios estão faltando');
   addChatMessage('ai', issues.join('\n\n'));
   await showFieldEditor();
@@ -176,7 +170,7 @@ async function showConfirmationSummary() {
     })
     .join('\n');
   
-  addChatMessage('ai', `📋 **Resumo dos dados:**\n\n${summary}\n\n✅ **Estes dados estão corretos para inserir?**`);
+  addChatMessage('ai', `📋 **Resumo dos dados:**\n\n${summary}\n\n✅ **Confira os campos e adicione mais se necessário:**`);
   
   await showFieldEditor();
 }
@@ -194,13 +188,11 @@ async function submitUserResponse() {
     addChatMessage('user', response);
     document.getElementById('userResponse').value = '';
     
-    showStatus('info', '🤖 Processando sua resposta com contexto da org...');
+    showStatus('info', '🤖 Processando sua resposta...');
     
-    // Busca chunks relevantes para a resposta
     const relevantChunks = window.metadataChunker.searchRelevantChunks(appState.objectName, response);
     const context = window.metadataChunker.generateCompactContext(appState.objectName, relevantChunks);
     
-    // Processa resposta com contexto da org
     const messages = [
       {
         role: 'system',
@@ -229,9 +221,7 @@ Retorne JSON:
     ];
     
     const updated = await window.aiProcessor.callGPT(messages);
-    console.log('🔄 Campos atualizados:', updated);
     
-    // Atualiza campos
     appState.fields = { ...appState.fields, ...updated.fields };
     
     if (updated.changes && updated.changes.length > 0) {
@@ -239,11 +229,9 @@ Retorne JSON:
     }
     
     if (updated.allResolved) {
-      // Tudo resolvido
       hideCorrectionInput();
       await showConfirmationSummary();
     } else {
-      // Ainda precisa de mais info
       const revalidated = await window.aiProcessor.validateAndEnrichFields(
         appState.objectName,
         appState.fields,
@@ -260,38 +248,222 @@ Retorne JSON:
   }
 }
 
+// ============================================================
+// EDITOR DE CAMPOS SIMPLIFICADO COM DROPDOWNS
+// ============================================================
 async function showFieldEditor() {
   appState.step = 'ready';
   
-  showStatus('success', '✅ Dados prontos para inserção!');
+  showStatus('success', '✅ Revise os campos e clique em Confirmar');
   
   const container = document.getElementById('fieldsContainer');
   container.innerHTML = '';
   
-  // Cria inputs editáveis para cada campo
+  // Adiciona campos identificados pela IA
   for (const [fieldName, value] of Object.entries(appState.fields)) {
-    const fieldMeta = appState.metadata.fields.find(f => f.name === fieldName);
-    const label = fieldMeta ? fieldMeta.label : fieldName;
-    
-    const row = document.createElement('div');
-    row.className = 'field-row';
-    row.innerHTML = `
-      <div class="field-label">${label}</div>
-      <input type="text" class="field-input" data-field="${fieldName}" value="${value || ''}">
-    `;
-    container.appendChild(row);
+    addFieldRow(container, fieldName, value);
   }
   
   document.getElementById('fieldEditor').classList.remove('hidden');
   document.getElementById('chatBox').classList.add('hidden');
 }
 
+function addFieldRow(container, fieldName, value) {
+  const fieldMeta = appState.metadata.fields.find(f => f.name === fieldName);
+  const label = fieldMeta ? fieldMeta.label : fieldName;
+  const isRequired = fieldMeta ? (!fieldMeta.nillable && !fieldMeta.defaultedOnCreate) : false;
+  
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  row.dataset.fieldname = fieldName;
+  
+  // Cria input apropriado baseado no tipo de campo
+  let inputHtml = '';
+  
+  if (fieldMeta && fieldMeta.picklistValues && fieldMeta.picklistValues.length > 0) {
+    // Campo PICKLIST - usa dropdown
+    const options = fieldMeta.picklistValues
+      .filter(pv => pv.active)
+      .map(pv => `<option value="${pv.value}" ${pv.value === value ? 'selected' : ''}>${pv.label}</option>`)
+      .join('');
+    
+    inputHtml = `
+      <select class="field-input" data-field="${fieldName}">
+        <option value="">-- Selecione --</option>
+        ${options}
+      </select>
+    `;
+  } else if (fieldMeta && fieldMeta.type === 'boolean') {
+    // Campo BOOLEAN - usa dropdown sim/não
+    inputHtml = `
+      <select class="field-input" data-field="${fieldName}">
+        <option value="">-- Selecione --</option>
+        <option value="true" ${value === true || value === 'true' ? 'selected' : ''}>Sim</option>
+        <option value="false" ${value === false || value === 'false' ? 'selected' : ''}>Não</option>
+      </select>
+    `;
+  } else {
+    // Campo TEXTO - usa input normal
+    inputHtml = `<input type="text" class="field-input" data-field="${fieldName}" value="${value || ''}" placeholder="Digite o valor...">`;
+  }
+  
+  row.innerHTML = `
+    <div class="field-label-container">
+      <div class="field-label">
+        ${label}
+        ${isRequired ? '<span class="required-badge">*</span>' : ''}
+      </div>
+      <div class="field-api-name">${fieldName}</div>
+    </div>
+    <div class="field-input-group">
+      ${inputHtml}
+      <button class="btn-remove-field" data-field="${fieldName}" title="Remover campo">🗑️</button>
+    </div>
+  `;
+  
+  container.appendChild(row);
+  
+  // Event listener para remover campo
+  row.querySelector('.btn-remove-field').addEventListener('click', (e) => {
+    const field = e.target.dataset.field;
+    delete appState.fields[field];
+    row.remove();
+  });
+}
+
+// ============================================================
+// ADICIONAR NOVO CAMPO (SIMPLIFICADO)
+// ============================================================
+function addNewFieldRow() {
+  const container = document.getElementById('fieldsContainer');
+  
+  // Cria uma nova linha com dropdown de campos
+  const row = document.createElement('div');
+  row.className = 'field-row field-row-new';
+  
+  // Filtra campos disponíveis
+  const availableFields = appState.metadata.fields
+    .filter(f => f.createable && !appState.fields[f.name])
+    .sort((a, b) => a.label.localeCompare(b.label));
+  
+  const fieldOptions = availableFields
+    .map(f => {
+      const required = (!f.nillable && !f.defaultedOnCreate) ? ' *' : '';
+      return `<option value="${f.name}">${f.label}${required}</option>`;
+    })
+    .join('');
+  
+  row.innerHTML = `
+    <div class="field-label-container">
+      <select class="field-select" data-row="new">
+        <option value="">-- Selecione um campo --</option>
+        ${fieldOptions}
+      </select>
+    </div>
+    <div class="field-input-group">
+      <input type="text" class="field-input-new" placeholder="Aguardando seleção..." disabled>
+      <button class="btn-remove-field" title="Remover linha">❌</button>
+    </div>
+  `;
+  
+  container.appendChild(row);
+  
+  const select = row.querySelector('.field-select');
+  const input = row.querySelector('.field-input-new');
+  const removeBtn = row.querySelector('.btn-remove-field');
+  
+  // Quando selecionar um campo
+  select.addEventListener('change', () => {
+    const fieldName = select.value;
+    
+    if (!fieldName) {
+      input.disabled = true;
+      input.placeholder = 'Aguardando seleção...';
+      return;
+    }
+    
+    const fieldMeta = appState.metadata.fields.find(f => f.name === fieldName);
+    
+    if (!fieldMeta) return;
+    
+    // Remove a classe de nova e transforma em campo normal
+    row.classList.remove('field-row-new');
+    row.dataset.fieldname = fieldName;
+    
+    // Atualiza o visual
+    const labelContainer = row.querySelector('.field-label-container');
+    const isRequired = !fieldMeta.nillable && !fieldMeta.defaultedOnCreate;
+    
+    labelContainer.innerHTML = `
+      <div class="field-label">
+        ${fieldMeta.label}
+        ${isRequired ? '<span class="required-badge">*</span>' : ''}
+      </div>
+      <div class="field-api-name">${fieldName}</div>
+    `;
+    
+    // Substitui o input pelo tipo correto
+    const inputGroup = row.querySelector('.field-input-group');
+    let newInput = '';
+    
+    if (fieldMeta.picklistValues && fieldMeta.picklistValues.length > 0) {
+      const options = fieldMeta.picklistValues
+        .filter(pv => pv.active)
+        .map(pv => `<option value="${pv.value}">${pv.label}</option>`)
+        .join('');
+      
+      newInput = `
+        <select class="field-input" data-field="${fieldName}">
+          <option value="">-- Selecione --</option>
+          ${options}
+        </select>
+      `;
+    } else if (fieldMeta.type === 'boolean') {
+      newInput = `
+        <select class="field-input" data-field="${fieldName}">
+          <option value="">-- Selecione --</option>
+          <option value="true">Sim</option>
+          <option value="false">Não</option>
+        </select>
+      `;
+    } else {
+      newInput = `<input type="text" class="field-input" data-field="${fieldName}" placeholder="Digite o valor...">`;
+    }
+    
+    inputGroup.innerHTML = `
+      ${newInput}
+      <button class="btn-remove-field" data-field="${fieldName}" title="Remover campo">🗑️</button>
+    `;
+    
+    // Atualiza o event listener do botão remover
+    inputGroup.querySelector('.btn-remove-field').addEventListener('click', () => {
+      delete appState.fields[fieldName];
+      row.remove();
+    });
+    
+    // Foca no novo input
+    const finalInput = inputGroup.querySelector('.field-input');
+    if (finalInput) finalInput.focus();
+  });
+  
+  // Remover linha vazia
+  removeBtn.addEventListener('click', () => {
+    row.remove();
+  });
+  
+  // Foca no select
+  select.focus();
+}
+
+// ============================================================
+// CONFIRMAÇÃO E INSERÇÃO
+// ============================================================
 async function confirmInsert() {
   try {
     setProcessing(true);
     appState.step = 'inserting';
     
-    // Coleta valores editados
+    // Coleta valores de todos os inputs/selects
     document.querySelectorAll('.field-input').forEach(input => {
       const fieldName = input.dataset.field;
       appState.fields[fieldName] = input.value;
@@ -299,7 +471,6 @@ async function confirmInsert() {
     
     showStatus('info', '💾 Inserindo registro no Salesforce...');
     
-    // Envia para content script inserir
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
     chrome.tabs.sendMessage(tab.id, {
@@ -314,7 +485,6 @@ async function confirmInsert() {
         
         addChatMessage('ai', `🎉 Registro criado com sucesso!\n\nID: ${response.data.id}`);
         
-        // Limpa campos
         setTimeout(() => {
           resetUI();
           document.getElementById('transcription').value = '';
@@ -337,18 +507,14 @@ async function handleDMLError(error) {
   showStatus('error', '❌ Erro ao inserir registro');
   
   try {
-    // Pede ao GPT para explicar o erro e sugerir correção
     const explanation = await window.aiProcessor.explainDMLError(
       error,
       appState.objectName,
       appState.fields
     );
     
-    console.log('🔧 Explicação do erro:', explanation);
-    
     addChatMessage('ai', `❌ ${explanation.problem}\n\n💡 ${explanation.solution}\n\n${explanation.user_message}`);
     
-    // Atualiza campos sugeridos
     if (explanation.suggested_fields) {
       appState.fields = { ...appState.fields, ...explanation.suggested_fields };
       await showFieldEditor();
@@ -422,14 +588,8 @@ function resetUI() {
   document.getElementById('userResponse').value = '';
 }
 
-function formatFields(fields) {
-  return Object.entries(fields)
-    .map(([key, value]) => `• **${key}**: ${value}`)
-    .join('\n');
-}
-
 // ============================================================
-// SOQL (mantido da versão original)
+// SOQL
 // ============================================================
 async function runSOQL() {
   const query = document.getElementById('query').value.trim();
@@ -442,9 +602,7 @@ async function runSOQL() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
-    chrome.tabs.sendMessage(tab.id, { type: 'RUN_SOQL', query }, (resp) => {
-      // Resultado chega via runtime.onMessage
-    });
+    chrome.tabs.sendMessage(tab.id, { type: 'RUN_SOQL', query }, (resp) => {});
     
     document.getElementById('queryResult').classList.remove('hidden');
     document.getElementById('queryResult').textContent = '⏳ Executando...';
@@ -454,7 +612,6 @@ async function runSOQL() {
   }
 }
 
-// Listener para resultados do content script
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'SOQL_RESULT') {
     document.getElementById('queryResult').classList.remove('hidden');
