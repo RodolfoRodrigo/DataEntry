@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Salesforce AI Assistant",
-  "version": "2.0.0",
-  "description": "Assistente inteligente para criar registros no Salesforce a partir de transcrições usando GPT",
+  "version": "3.0.0",
+  "description": "Assistente inteligente com interface flow para criar registros no Salesforce usando GPT",
   
   "permissions": [
     "activeTab",
@@ -29,7 +29,6 @@
   },
   
   "action": {
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -54,9 +53,29 @@
         "https://*.force.com/*",
         "https://*.my.salesforce.com/*"
       ],
-      "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": false
+      "js": [
+        "metadata-chunker.js",
+        "ai-processor.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "metadata-chunker.js",
+        "ai-processor.js",
+        "content.js"
+      ],
+      "matches": [
+        "https://*.salesforce.com/*",
+        "https://*.lightning.force.com/*",
+        "https://*.visual.force.com/*",
+        "https://*.cloudforce.com/*",
+        "https://*.force.com/*"
+      ]
     }
   ],
   

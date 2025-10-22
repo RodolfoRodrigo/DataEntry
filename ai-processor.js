@@ -4,7 +4,7 @@
 class AIProcessor {
   constructor() {
     this.apiKey = null;
-    this.metadataCache = new Map(); // cache de metadados dos objetos
+    this.metadataCache = new Map();
     this.isInitialized = false;
   }
 
@@ -13,7 +13,6 @@ class AIProcessor {
       const { openai_api_key } = await chrome.storage.sync.get('openai_api_key');
       this.apiKey = openai_api_key;
       
-      // carrega cache de metadados
       const { metadata_cache } = await chrome.storage.local.get('metadata_cache');
       if (metadata_cache) {
         this.metadataCache = new Map(Object.entries(metadata_cache));
@@ -90,61 +89,34 @@ Retorne JSON no formato:
   }
 
   async getObjectMetadata(objectName) {
-    // verifica cache primeiro
+    // Verifica cache primeiro
     if (this.metadataCache.has(objectName)) {
       console.log(`✅ Metadados de ${objectName} carregados do cache`);
       return this.metadataCache.get(objectName);
     }
 
-    // busca via API do Salesforce
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    if (!tab) {
-      throw new Error('Nenhuma aba ativa encontrada. Abra uma página do Salesforce.');
+    // Usa função global que já está no content.js
+    if (typeof window.getObjectMetadata === 'function') {
+      console.log(`📡 Usando função global para buscar metadados de ${objectName}`);
+      const metadata = await window.getObjectMetadata(objectName);
+      
+      // Cria chunks do metadata para RAG
+      if (window.metadataChunker) {
+        console.log('🧩 Criando chunks do metadata...');
+        window.metadataChunker.chunkMetadata(objectName, metadata);
+      }
+      
+      // Salva no cache
+      this.metadataCache.set(objectName, metadata);
+      this.saveMetadataCache();
+      console.log(`✅ Metadados de ${objectName} salvos no cache`);
+      
+      return metadata;
     }
-
-    console.log(`📡 Enviando requisição de metadados para ${objectName}...`);
     
-    return new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tab.id, {
-        type: 'GET_METADATA',
-        objectName
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error('❌ Erro de runtime:', chrome.runtime.lastError);
-          reject(new Error(`Erro de comunicação: ${chrome.runtime.lastError.message}. Certifique-se de estar em uma página do Salesforce.`));
-          return;
-        }
-
-        if (!response) {
-          console.error('❌ Resposta vazia do content script');
-          reject(new Error('Sem resposta do Salesforce. Recarregue a página do Salesforce e tente novamente.'));
-          return;
-        }
-
-        if (response.ok) {
-          const metadata = response.data;
-          
-          // Cria chunks do metadata para RAG
-          console.log('🧩 Criando chunks do metadata...');
-          window.metadataChunker.chunkMetadata(objectName, metadata);
-          
-          // salva no cache
-          this.metadataCache.set(objectName, metadata);
-          this.saveMetadataCache();
-          console.log(`✅ Metadados de ${objectName} salvos no cache e em chunks`);
-          resolve(metadata);
-        } else {
-          console.error('❌ Erro na resposta:', response.error);
-          reject(new Error(response.error || 'Erro ao buscar metadados do Salesforce'));
-        }
-      });
-    });
+    throw new Error('Função getObjectMetadata não disponível. Certifique-se de estar em uma página Salesforce.');
   }
 
-  /**
-   * NOVO: Valida e enriquece campos usando contexto da org
-   */
   async validateAndEnrichFields(objectName, fields, transcription) {
     // Busca metadados se ainda não tiver
     let metadata = this.metadataCache.get(objectName);
@@ -221,14 +193,14 @@ Valide e enriqueça esses dados usando os metadados da org.`
     const missingRequired = [];
     const suggestions = [];
 
-    // verifica campos obrigatórios
+    // Verifica campos obrigatórios
     for (const req of requiredFields) {
       if (!fields[req.name]) {
         missingRequired.push(req);
       }
     }
 
-    // valida tipos e valores dos campos fornecidos
+    // Valida tipos e valores dos campos fornecidos
     for (const [fieldName, value] of Object.entries(fields)) {
       const fieldMeta = metadata.fields.find(f => f.name === fieldName);
       
@@ -242,7 +214,7 @@ Valide e enriqueça esses dados usando os metadados da org.`
         continue;
       }
 
-      // validação de tipo
+      // Validação de tipo
       const validation = this.validateFieldType(fieldMeta, value);
       if (!validation.valid) {
         invalidFields.push({ field: fieldName, reason: validation.reason });
