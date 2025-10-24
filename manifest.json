@@ -56,7 +56,11 @@
       "js": [
         "metadata-chunker.js",
         "ai-processor.js",
+        "ui-templates.js",
         "content.js"
+      ],
+      "css": [
+        "content-ui.css"
       ],
       "run_at": "document_idle"
     }
