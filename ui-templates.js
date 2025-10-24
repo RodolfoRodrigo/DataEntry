@@ -49,6 +49,7 @@
           <div class="sf-card">
             <div class="sf-card-title">✏️ Revisar Campos</div>
             <div class="sf-card-subtitle">Ajuste os valores antes de criar o registro.</div>
+            <div class="sf-card-context sf-hidden" id="sf-record-context"></div>
             <div class="sf-card-actions">
               <button class="sf-btn sf-btn-secondary" id="sf-add-field" type="button">➕ Adicionar campo</button>
             </div>

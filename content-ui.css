@@ -291,6 +291,30 @@
   margin-bottom: 16px;
 }
 
+.sf-card-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #eef2ff;
+  color: #4c51bf;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  border: 1px solid #d6dcff;
+}
+
+.sf-card-context strong {
+  color: #4338ca;
+}
+
+.sf-record-alias {
+  color: #4c51bf;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
 .sf-card-content {
   font-size: 14px;
   color: #495057;
@@ -302,6 +326,31 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.sf-result-item {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.sf-result-item-title {
+  font-weight: 600;
+  color: #343a40;
+  margin-bottom: 4px;
+}
+
+.sf-result-alias {
+  color: #667eea;
+  font-weight: 500;
+}
+
+.sf-result-item-id {
+  font-size: 12px;
+  color: #6c757d;
+  word-break: break-all;
 }
 
 .sf-field-row {

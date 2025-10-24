@@ -63,21 +63,37 @@ class AIProcessor {
     const messages = [
       {
         role: 'system',
-        content: `Você é um especialista em Salesforce. Analise a transcrição e identifique:
-1. Qual objeto Salesforce está sendo mencionado (Account, Contact, Opportunity, Case, Lead, etc)
-2. Extraia todos os campos e valores mencionados
+        content: `Você é um especialista em Salesforce. Analise a transcrição e identifique todos os registros que precisam ser criados.
 
-IMPORTANTE: 
-- Se o usuário mencionar "nome completo" ou "nome" para Contact/Lead, sempre separe em FirstName e LastName
-- Nunca use o campo "Name" diretamente em Contact/Lead
-- Para outros objetos, use "Name" normalmente
+INSTRUÇÕES IMPORTANTES:
+1. Pode haver UM OU VÁRIOS registros. Detecte todos que o usuário solicitar.
+2. Respeite a ordem lógica de criação (por exemplo, criar Opportunity antes de Quote).
+3. Para Contact e Lead, se o usuário disser "nome completo" ou "nome", sempre separe em FirstName e LastName. Nunca use o campo "Name" diretamente para esses objetos.
+4. Para demais objetos, utilize o campo "Name" normalmente quando fizer sentido.
+5. Quando um registro precisar de referência (lookup) a outro registro criado no mesmo fluxo, informe explicitamente como obter o valor usando um alias.
+6. Gere aliases curtos (sem espaços) para cada registro, por exemplo "OpportunityPrincipal" ou "QuoteInicial".
+7. Use relationshipFields somente quando o valor vier de outro registro do fluxo, informando fromRecord (alias) e field (por padrão "Id").
 
-Retorne JSON no formato:
+RETORNO OBRIGATÓRIO (JSON):
 {
-  "object": "NomeDoObjeto",
-  "fields": {"FieldName": "valor", ...},
-  "confidence": 0.95
-}`
+  "records": [
+    {
+      "alias": "AliasDoRegistro",
+      "object": "NomeDoObjeto",
+      "action": "insert",
+      "fields": {"FieldName": "valor", ...},
+      "relationshipFields": {
+        "LookupField": {"fromRecord": "AliasDeOrigem", "field": "Id"}
+      },
+      "confidence": 0.95
+    }
+  ],
+  "summary": "Resumo rápido do que será criado"
+}
+
+- Sempre inclua pelo menos um registro.
+- Quando não houver dependências, retorne relationshipFields como objeto vazio.
+- Garanta que os aliases sejam únicos e consistentes.`
       },
       {
         role: 'user',

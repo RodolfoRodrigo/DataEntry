@@ -24,6 +24,14 @@ async function ensureSession() {
 function createInitialState() {
   return {
     step: 'idle',
+    transcription: '',
+    records: [],
+    currentRecordIndex: -1,
+    currentRecordAlias: null,
+    relationshipFields: {},
+    recordResults: {},
+    resultsLog: [],
+    processingMultiple: false,
     objectName: null,
     fields: {},
     metadata: null,
@@ -36,6 +44,210 @@ let currentState = createInitialState();
 
 function resetState() {
   currentState = createInitialState();
+}
+
+function ensureUniqueAliases(records) {
+  const aliasCount = {};
+  return records.map((record) => {
+    const base = (record.alias || record.object || 'Registro').toString().trim() || 'Registro';
+    const sanitized = base.replace(/[^a-zA-Z0-9_]/g, '_') || 'Registro';
+    aliasCount[sanitized] = (aliasCount[sanitized] || 0) + 1;
+    const uniqueAlias = aliasCount[sanitized] > 1 ? `${sanitized}_${aliasCount[sanitized]}` : sanitized;
+    return {
+      ...record,
+      alias: uniqueAlias
+    };
+  });
+}
+
+function normalizeIdentifiedRecords(identified) {
+  if (!identified) return [];
+
+  const rawRecords = Array.isArray(identified.records) && identified.records.length > 0
+    ? identified.records
+    : (identified.object ? [{
+        alias: identified.alias || identified.object,
+        object: identified.object,
+        action: identified.action || 'insert',
+        fields: identified.fields || {},
+        relationshipFields: identified.relationshipFields || {},
+        confidence: identified.confidence
+      }] : []);
+
+  const normalized = rawRecords
+    .map((record, index) => {
+      const objectName = record.object || record.objectName || identified.object;
+      if (!objectName) {
+        return null;
+      }
+
+      const fields = { ...(record.fields || {}) };
+      const relationships = { ...(record.relationshipFields || {}) };
+
+      Object.entries(fields).forEach(([fieldName, value]) => {
+        if (value && typeof value === 'object' && value.fromRecord) {
+          relationships[fieldName] = {
+            fromRecord: value.fromRecord,
+            field: value.field || 'Id'
+          };
+          delete fields[fieldName];
+        }
+      });
+
+      Object.entries(relationships).forEach(([fieldName, info]) => {
+        if (!info || !info.fromRecord) {
+          delete relationships[fieldName];
+          return;
+        }
+        relationships[fieldName] = {
+          fromRecord: info.fromRecord,
+          field: info.field || 'Id'
+        };
+      });
+
+      return {
+        alias: (record.alias || objectName || `Registro${index + 1}`).toString().trim(),
+        object: objectName,
+        action: record.action || 'insert',
+        fields,
+        relationshipFields: relationships,
+        confidence: typeof record.confidence === 'number'
+          ? record.confidence
+          : (typeof identified.confidence === 'number' ? identified.confidence : null),
+        summary: record.summary || null
+      };
+    })
+    .filter(Boolean);
+
+  return ensureUniqueAliases(normalized);
+}
+
+function findRecordByAlias(alias) {
+  if (!alias || !Array.isArray(currentState.records)) return null;
+  return currentState.records.find(record => record.alias === alias) || null;
+}
+
+function resolveRelationshipFields(record) {
+  if (!record || !record.relationshipFields) return;
+
+  Object.entries(record.relationshipFields).forEach(([fieldName, info]) => {
+    if (!info || !info.fromRecord) return;
+
+    const sourceAlias = info.fromRecord;
+    const result = currentState.recordResults[sourceAlias] || findRecordByAlias(sourceAlias)?.insertResult || null;
+
+    if (!result) return;
+
+    let resolvedValue = null;
+    if (info.field && info.field !== 'Id') {
+      resolvedValue = result[info.field] ?? findRecordByAlias(sourceAlias)?.fields?.[info.field] ?? null;
+    } else {
+      resolvedValue = result.id || result.Id || null;
+    }
+
+    if (resolvedValue !== null && resolvedValue !== undefined) {
+      currentState.fields[fieldName] = resolvedValue;
+    }
+  });
+}
+
+function updateDependentRecords(sourceAlias, insertResult) {
+  if (!sourceAlias || !insertResult || !Array.isArray(currentState.records)) return;
+
+  currentState.records.forEach(record => {
+    if (!record.relationshipFields) return;
+
+    Object.entries(record.relationshipFields).forEach(([fieldName, info]) => {
+      if (!info || info.fromRecord !== sourceAlias) return;
+
+      let resolvedValue = null;
+      if (info.field && info.field !== 'Id') {
+        resolvedValue = insertResult[info.field] ?? record.fields?.[info.field] ?? null;
+      } else {
+        resolvedValue = insertResult.id || insertResult.Id || null;
+      }
+
+      if (resolvedValue !== null && resolvedValue !== undefined) {
+        record.fields = { ...(record.fields || {}) };
+        record.fields[fieldName] = resolvedValue;
+      }
+    });
+  });
+}
+
+function updateCurrentRecordField(fieldName, value) {
+  if (!Array.isArray(currentState.records)) return;
+  const record = currentState.records[currentState.currentRecordIndex];
+  if (!record) return;
+
+  if (!record.fields) {
+    record.fields = {};
+  }
+
+  if (value === undefined) {
+    delete record.fields[fieldName];
+  } else {
+    record.fields[fieldName] = value;
+  }
+}
+
+function updateRecordContextDisplay() {
+  const contextEl = document.getElementById('sf-record-context');
+  if (!contextEl) return;
+
+  const total = Array.isArray(currentState.records) ? currentState.records.length : 0;
+  const index = currentState.currentRecordIndex;
+  const record = total > 0 && index >= 0 ? currentState.records[index] : null;
+
+  if (!record) {
+    contextEl.textContent = '';
+    contextEl.classList.add('sf-hidden');
+    return;
+  }
+
+  const progress = total > 1 ? `Registro ${index + 1} de ${total}` : 'Registro único';
+  const aliasLabel = record.alias && record.alias !== record.object
+    ? ` <span class="sf-record-alias">(${record.alias})</span>`
+    : '';
+
+  contextEl.innerHTML = `${progress} • <strong>${record.object}</strong>${aliasLabel}`;
+  contextEl.classList.remove('sf-hidden');
+}
+
+function appendResultLog(record, result) {
+  const resultArea = document.getElementById('sf-result-area');
+  const resultTitle = document.getElementById('sf-result-title');
+  const resultContent = document.getElementById('sf-result-content');
+
+  if (!resultArea || !resultTitle || !resultContent) return;
+
+  currentState.resultsLog = currentState.resultsLog || [];
+  currentState.resultsLog.push({
+    object: record?.object || 'Registro',
+    alias: record?.alias || record?.object || 'Registro',
+    id: result?.id || result?.Id || '—'
+  });
+
+  resultTitle.textContent = currentState.processingMultiple
+    ? '✅ Registros criados'
+    : '✅ Registro criado com sucesso!';
+
+  const itemsHtml = currentState.resultsLog
+    .map(entry => {
+      const aliasInfo = entry.alias && entry.alias !== entry.object
+        ? ` <span class="sf-result-alias">(${entry.alias})</span>`
+        : '';
+      return `
+        <div class="sf-result-item">
+          <div class="sf-result-item-title"><strong>${entry.object}</strong>${aliasInfo}</div>
+          <div class="sf-result-item-id">ID: ${entry.id}</div>
+        </div>
+      `;
+    })
+    .join('');
+
+  resultContent.innerHTML = itemsHtml;
+  resultArea.classList.remove('sf-hidden');
 }
 
 // ============================================================
@@ -269,6 +481,11 @@ function resetFieldsEditor() {
   if (container) container.innerHTML = '';
   const editor = document.getElementById('sf-fields-editor');
   if (editor) editor.classList.add('sf-hidden');
+  const context = document.getElementById('sf-record-context');
+  if (context) {
+    context.textContent = '';
+    context.classList.add('sf-hidden');
+  }
 }
 
 function resetResultArea() {
@@ -276,6 +493,7 @@ function resetResultArea() {
   if (area) area.classList.add('sf-hidden');
   const content = document.getElementById('sf-result-content');
   if (content) content.innerHTML = '';
+  currentState.resultsLog = [];
 }
 
 function resetUI() {
@@ -305,6 +523,66 @@ function cancelProcess() {
 // ============================================================
 // PROCESSAMENTO PRINCIPAL
 // ============================================================
+async function prepareRecordForReview(recordIndex) {
+  if (!Array.isArray(currentState.records) || recordIndex < 0 || recordIndex >= currentState.records.length) {
+    throw new Error('Índice de registro inválido para processamento.');
+  }
+
+  const record = currentState.records[recordIndex];
+  record.status = 'processing';
+
+  currentState.currentRecordIndex = recordIndex;
+  currentState.currentRecordAlias = record.alias;
+  currentState.objectName = record.object;
+  currentState.relationshipFields = { ...(record.relationshipFields || {}) };
+  currentState.fields = { ...(record.fields || {}) };
+  currentState.metadata = null;
+  currentState.questions = [];
+  currentState.lookupCache = new Map();
+  currentState.step = 'processing';
+
+  const total = currentState.records.length;
+  const aliasLabel = record.alias && record.alias !== record.object ? ` (${record.alias})` : '';
+  addChatMessage('ai', `➡️ Processando registro ${recordIndex + 1} de ${total}: **${record.object}**${aliasLabel}.`);
+
+  showStatus('info', `📚 Consultando estrutura do ${record.object} na sua org...`);
+  currentState.metadata = await window.aiProcessor.getObjectMetadata(record.object);
+
+  resolveRelationshipFields(record);
+  record.fields = { ...currentState.fields };
+
+  await processLookupFields(currentState.transcription);
+
+  showStatus('info', '🤖 Validando dados com base na configuração da sua org...');
+  const enriched = await window.aiProcessor.validateAndEnrichFields(
+    record.object,
+    currentState.fields,
+    currentState.transcription
+  );
+
+  currentState.fields = { ...currentState.fields, ...(enriched.fields || {}) };
+  record.fields = { ...currentState.fields };
+
+  if (enriched.autoCorrections && enriched.autoCorrections.length > 0) {
+    addChatMessage('ai', `🔧 **Correções automáticas aplicadas:**\n${enriched.autoCorrections.map(c => `• ${c}`).join('\n')}`);
+  }
+
+  const hasIssues = (enriched.missingRequired && enriched.missingRequired.length > 0) ||
+                    (enriched.invalidValues && enriched.invalidValues.length > 0) ||
+                    (enriched.needsUserInput && enriched.needsUserInput.length > 0);
+
+  if (hasIssues) {
+    await handleEnrichmentIssues(enriched);
+  } else {
+    await showConfirmationSummary();
+  }
+
+  record.status = 'ready';
+  record.enriched = enriched;
+  currentState.step = 'ready';
+  updateRecordContextDisplay();
+}
+
 async function processTranscriptionFull() {
   const textarea = document.getElementById('sf-transcription-input');
   const transcription = textarea ? textarea.value.trim() : '';
@@ -318,6 +596,8 @@ async function processTranscriptionFull() {
     resetState();
     resetUI();
     setProcessing(true);
+    currentState.transcription = transcription;
+
     showStatus('info', '🔍 Analisando transcrição com IA...');
 
     await loadScripts();
@@ -333,43 +613,34 @@ async function processTranscriptionFull() {
     currentState.step = 'identifying';
 
     const identified = await window.aiProcessor.identifyObject(transcription);
-    if (!identified || !identified.object) {
-      throw new Error('Não foi possível identificar o objeto na transcrição.');
+    const records = normalizeIdentifiedRecords(identified);
+
+    if (!records || records.length === 0) {
+      throw new Error('Não foi possível identificar registros para criar.');
     }
 
-    currentState.objectName = identified.object;
-    currentState.fields = { ...(identified.fields || {}) };
-    addChatMessage('ai', `Identifiquei que você quer criar um **${identified.object}**.`);
+    currentState.records = records.map(record => ({
+      ...record,
+      fields: { ...(record.fields || {}) },
+      status: 'pending'
+    }));
 
-    showStatus('info', `📚 Consultando estrutura do ${identified.object} na sua org...`);
-    currentState.metadata = await window.aiProcessor.getObjectMetadata(identified.object);
+    currentState.processingMultiple = currentState.records.length > 1;
 
-    await processLookupFields(transcription);
-
-    showStatus('info', '🤖 Validando dados com base na configuração da sua org...');
-    const enriched = await window.aiProcessor.validateAndEnrichFields(
-      identified.object,
-      identified.fields,
-      transcription
-    );
-
-    currentState.fields = { ...currentState.fields, ...(enriched.fields || {}) };
-
-    if (enriched.autoCorrections && enriched.autoCorrections.length > 0) {
-      addChatMessage('ai', `🔧 **Correções automáticas aplicadas:**\n${enriched.autoCorrections.map(c => `• ${c}`).join('\n')}`);
-    }
-
-    const hasIssues = (enriched.missingRequired && enriched.missingRequired.length > 0) ||
-                      (enriched.invalidValues && enriched.invalidValues.length > 0) ||
-                      (enriched.needsUserInput && enriched.needsUserInput.length > 0);
-
-    if (hasIssues) {
-      await handleEnrichmentIssues(enriched);
+    if (currentState.processingMultiple) {
+      const summaryList = currentState.records
+        .map((record, index) => `• ${index + 1}. **${record.object}**${record.alias && record.alias !== record.object ? ` (${record.alias})` : ''}`)
+        .join('\n');
+      addChatMessage('ai', `Identifiquei ${currentState.records.length} registros para criar:\n${summaryList}`);
     } else {
-      await showConfirmationSummary();
+      addChatMessage('ai', `Identifiquei que você quer criar um **${currentState.records[0].object}**.`);
     }
 
-    currentState.step = 'ready';
+    if (identified && identified.summary) {
+      addChatMessage('ai', `🧠 ${identified.summary}`);
+    }
+
+    await prepareRecordForReview(0);
   } catch (error) {
     console.error('Erro no processamento completo:', error);
     showStatus('error', `❌ Erro: ${error.message}`);
@@ -402,6 +673,7 @@ async function processLookupFields(transcription) {
 
       if (results.length === 1) {
         currentState.fields[lookupField.name] = results[0].Id;
+        updateCurrentRecordField(lookupField.name, results[0].Id);
         addChatMessage('ai', `✅ Encontrei automaticamente: **${results[0].Name}** para ${lookupField.label}`);
       } else {
         addChatMessage('ai', `🔍 Encontrei ${results.length} opções para **${lookupField.label}**. Você poderá selecionar na revisão.`);
@@ -466,6 +738,8 @@ async function searchLookupRealtime(fieldName, searchTerm) {
 }
 
 async function handleEnrichmentIssues(enriched) {
+  updateRecordContextDisplay();
+
   const issues = [];
 
   if (enriched.missingRequired && enriched.missingRequired.length > 0) {
@@ -495,6 +769,14 @@ async function handleEnrichmentIssues(enriched) {
 async function showConfirmationSummary() {
   currentState.step = 'ready';
 
+  const total = Array.isArray(currentState.records) ? currentState.records.length : 1;
+  const recordIndex = currentState.currentRecordIndex >= 0 ? currentState.currentRecordIndex : 0;
+  const record = Array.isArray(currentState.records) ? currentState.records[recordIndex] : null;
+  const aliasInfo = record && record.alias && record.alias !== record.object ? ` (${record.alias})` : '';
+  const intro = currentState.processingMultiple && record
+    ? `📋 **Resumo do registro ${recordIndex + 1}/${total} - ${record.object}${aliasInfo}:**`
+    : '📋 **Resumo dos dados identificados:**';
+
   const summary = Object.entries(currentState.fields)
     .map(([key, value]) => {
       const fieldMeta = currentState.metadata?.fields.find(f => f.name === key);
@@ -504,9 +786,10 @@ async function showConfirmationSummary() {
     .join('\n');
 
   if (summary) {
-    addChatMessage('ai', `📋 **Resumo dos dados identificados:**\n\n${summary}\n\n✅ Revise os campos e ajuste se necessário.`);
+    addChatMessage('ai', `${intro}\n\n${summary}\n\n✅ Revise os campos e ajuste se necessário.`);
   }
 
+  updateRecordContextDisplay();
   renderFieldsEditor();
   showStatus('success', '✅ Dados prontos para revisão.');
 }
@@ -518,6 +801,8 @@ function renderFieldsEditor() {
   const container = document.getElementById('sf-fields-list');
 
   if (!editor || !container) return;
+
+  updateRecordContextDisplay();
 
   container.innerHTML = '';
 
@@ -589,6 +874,7 @@ function buildFieldRow(fieldName, value) {
 
     select.addEventListener('change', (e) => {
       currentState.fields[fieldName] = e.target.value;
+      updateCurrentRecordField(fieldName, currentState.fields[fieldName]);
     });
 
     inputElement = select;
@@ -624,6 +910,7 @@ function buildFieldRow(fieldName, value) {
       } else {
         currentState.fields[fieldName] = '';
       }
+      updateCurrentRecordField(fieldName, currentState.fields[fieldName]);
     });
 
     inputElement = select;
@@ -637,6 +924,7 @@ function buildFieldRow(fieldName, value) {
 
     input.addEventListener('input', (e) => {
       currentState.fields[fieldName] = e.target.value;
+      updateCurrentRecordField(fieldName, e.target.value);
     });
 
     inputElement = input;
@@ -652,6 +940,7 @@ function buildFieldRow(fieldName, value) {
   removeBtn.addEventListener('click', () => {
     delete currentState.fields[fieldName];
     currentState.lookupCache.delete(fieldName);
+    updateCurrentRecordField(fieldName, undefined);
     row.remove();
   });
 
@@ -712,6 +1001,7 @@ function setupLookupInput(container, fieldName, fieldMeta) {
     const term = searchInput.value.trim();
     hiddenInput.value = '';
     currentState.fields[fieldName] = '';
+    updateCurrentRecordField(fieldName, '');
 
     clearTimeout(searchTimeout);
 
@@ -744,6 +1034,7 @@ function setupLookupInput(container, fieldName, fieldMeta) {
           hiddenInput.value = record.Id;
           searchInput.value = record.Name;
           currentState.fields[fieldName] = record.Id;
+          updateCurrentRecordField(fieldName, record.Id);
           resultsDiv.style.display = 'none';
         });
         resultsDiv.appendChild(item);
@@ -765,6 +1056,7 @@ function setupLookupInput(container, fieldName, fieldMeta) {
           hiddenInput.value = record.Id;
           searchInput.value = record.Name;
           currentState.fields[fieldName] = record.Id;
+          updateCurrentRecordField(fieldName, record.Id);
           resultsDiv.style.display = 'none';
         });
         resultsDiv.appendChild(item);
@@ -848,6 +1140,7 @@ function addNewFieldRow() {
     const newRow = buildFieldRow(fieldName, '');
     container.replaceChild(newRow, row);
     currentState.fields[fieldName] = '';
+    updateCurrentRecordField(fieldName, '');
   });
 }
 
@@ -905,6 +1198,13 @@ Retorne JSON:
 
     currentState.fields = { ...currentState.fields, ...(updated.fields || {}) };
 
+    if (Array.isArray(currentState.records)) {
+      const record = currentState.records[currentState.currentRecordIndex];
+      if (record) {
+        record.fields = { ...currentState.fields };
+      }
+    }
+
     if (updated.changes && updated.changes.length > 0) {
       addChatMessage('ai', `✅ **Atualizado:**\n${updated.changes.map(c => `• ${c}`).join('\n')}`);
     }
@@ -941,6 +1241,14 @@ async function confirmInsertion() {
     return;
   }
 
+  const recordIndex = currentState.currentRecordIndex;
+  const record = Array.isArray(currentState.records) ? currentState.records[recordIndex] : null;
+
+  if (!record) {
+    showStatus('error', '❌ Nenhum registro pendente para criação.');
+    return;
+  }
+
   try {
     const confirmBtn = document.getElementById('sf-confirm-insert');
     if (confirmBtn) {
@@ -965,13 +1273,43 @@ async function confirmInsertion() {
       currentState.fields[fieldName] = input.value;
     });
 
-    addChatMessage('ai', '💾 Criando registro no Salesforce...');
+    record.fields = { ...currentState.fields };
+
+    const aliasInfo = record.alias && record.alias !== record.object ? ` (${record.alias})` : '';
+    addChatMessage('ai', `💾 Criando registro ${record.object}${aliasInfo} no Salesforce...`);
 
     const result = await insertRecord(currentState.objectName, currentState.fields);
-    showInsertSuccess(result);
-    resetState();
+
+    record.insertResult = result;
+    record.status = 'completed';
+    currentState.recordResults[record.alias] = result;
+
+    appendResultLog(record, result);
+    showInsertSuccess(result, record);
+
+    updateDependentRecords(record.alias, result);
+
+    const nextIndex = recordIndex + 1;
+    if (nextIndex < currentState.records.length) {
+      const nextRecord = currentState.records[nextIndex];
+      const nextAlias = nextRecord.alias && nextRecord.alias !== nextRecord.object ? ` (${nextRecord.alias})` : '';
+      addChatMessage('ai', `➡️ Registro ${recordIndex + 1} criado. Preparando **${nextRecord.object}${nextAlias}**...`);
+
+      setProcessing(true);
+      try {
+        await prepareRecordForReview(nextIndex);
+      } finally {
+        setProcessing(false);
+      }
+    } else {
+      addChatMessage('ai', '🎉 Todos os registros foram criados com sucesso!');
+      showStatus('success', '🎉 Todos os registros foram criados com sucesso!');
+      resetFieldsEditor();
+      currentState.step = 'completed';
+      resetState();
+    }
   } catch (error) {
-    showInsertError(error);
+    showInsertError(error, record);
   } finally {
     const confirmBtn = document.getElementById('sf-confirm-insert');
     if (confirmBtn) {
@@ -981,33 +1319,32 @@ async function confirmInsertion() {
   }
 }
 
-function showInsertSuccess(data) {
-  const resultArea = document.getElementById('sf-result-area');
-  const resultTitle = document.getElementById('sf-result-title');
-  const resultContent = document.getElementById('sf-result-content');
+function showInsertSuccess(data, record) {
+  const total = Array.isArray(currentState.records) ? currentState.records.length : 1;
+  const recordIndex = currentState.currentRecordIndex >= 0 ? currentState.currentRecordIndex : 0;
+  const aliasInfo = record && record.alias && record.alias !== record.object ? ` (${record.alias})` : '';
 
-  if (!resultArea || !resultTitle || !resultContent) return;
+  const message = currentState.processingMultiple
+    ? `🎉 Registro ${recordIndex + 1} de ${total} (${record.object}${aliasInfo}) criado com sucesso! ID: ${data.id}`
+    : `🎉 Registro criado com sucesso! ID: ${data.id}`;
 
-  resultTitle.textContent = '✅ Registro criado com sucesso!';
-  resultContent.innerHTML = `
-    <strong>ID:</strong> ${data.id}<br>
-    <strong>Objeto:</strong> ${currentState.objectName || ''}
-  `;
-
-  resultArea.classList.remove('sf-hidden');
-  showStatus('success', '🎉 Registro criado com sucesso!');
-  addChatMessage('ai', `🎉 Registro criado com sucesso! ID: ${data.id}`);
-  resetFieldsEditor();
+  addChatMessage('ai', message);
+  showStatus('success', currentState.processingMultiple
+    ? `🎉 Registro ${recordIndex + 1} de ${total} criado com sucesso!`
+    : '🎉 Registro criado com sucesso!');
 }
 
-function showInsertError(error) {
+function showInsertError(error, record) {
   const resultArea = document.getElementById('sf-result-area');
   const resultTitle = document.getElementById('sf-result-title');
   const resultContent = document.getElementById('sf-result-content');
 
   if (!resultArea || !resultTitle || !resultContent) return;
 
-  resultTitle.textContent = '❌ Erro ao criar registro';
+  const aliasInfo = record && record.alias && record.alias !== record.object ? ` (${record.alias})` : '';
+  resultTitle.textContent = currentState.processingMultiple && record
+    ? `❌ Erro ao criar ${record.object}${aliasInfo}`
+    : '❌ Erro ao criar registro';
   resultContent.innerHTML = `<pre class="sf-pre-error">${typeof error === 'string' ? error : JSON.stringify(error, null, 2)}</pre>`;
 
   resultArea.classList.remove('sf-hidden');
