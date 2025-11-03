@@ -59,6 +59,45 @@ class AIProcessor {
     return JSON.parse(data.choices[0].message.content);
   }
 
+  async transcribeAudio(audioBlob, filename = 'audio.webm') {
+    if (!this.apiKey) {
+      throw new Error('API Key do OpenAI não configurada. Vá em Opções para configurar.');
+    }
+
+    const formData = new FormData();
+    formData.append('file', audioBlob, filename);
+    formData.append('model', 'gpt-4o-mini-transcribe');
+    formData.append('response_format', 'json');
+
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      let errorMessage = 'Unknown error';
+      try {
+        const error = await response.json();
+        errorMessage = error.error?.message || error.message || errorMessage;
+      } catch (parseError) {
+        console.warn('Erro ao ler resposta da transcrição:', parseError);
+      }
+      throw new Error(`OpenAI Audio API Error: ${errorMessage}`);
+    }
+
+    const data = await response.json();
+    const text = (data.text || '').trim();
+
+    if (!text) {
+      throw new Error('Transcrição vazia ou inválida retornada pela API.');
+    }
+
+    return text;
+  }
+
   async identifyObject(transcription) {
     const messages = [
       {
