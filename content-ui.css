@@ -168,6 +168,105 @@
   margin-bottom: 8px;
 }
 
+.sf-audio-controls {
+  margin-bottom: 24px;
+  background: #ffffff;
+  border: 1px solid #e9ecef;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+.sf-audio-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sf-upload-group {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.sf-file-input {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #f1f3f5;
+  color: #495057;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.sf-file-input input {
+  display: none;
+}
+
+.sf-file-input.sf-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sf-file-input:hover {
+  background: #e9ecef;
+}
+
+.sf-upload-hint {
+  font-size: 12px;
+  color: #6c757d;
+}
+
+.sf-audio-status {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #6c757d;
+}
+
+.sf-audio-status[data-status="success"] {
+  color: #198754;
+}
+
+.sf-audio-status[data-status="error"] {
+  color: #dc3545;
+}
+
+.sf-recording-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #dc3545;
+  font-weight: 600;
+}
+
+.sf-recording-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #dc3545;
+  animation: sf-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sf-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.6;
+  }
+}
+
 .sf-textarea {
   width: 100%;
   padding: 12px 16px;

@@ -27,6 +27,28 @@
           <textarea id="sf-transcription-input" class="sf-textarea" rows="8" placeholder="Exemplo:\n'Criar um contato chamado João Silva, email joao@empresa.com, telefone 11 98765-4321, trabalha na Acme Corp'"></textarea>
         </div>
 
+        <div class="sf-audio-controls">
+          <div class="sf-input-label">Gravar ou enviar áudio</div>
+          <div class="sf-audio-actions">
+            <button class="sf-btn sf-btn-secondary" id="sf-record-btn" type="button">🎙️ Gravar áudio</button>
+            <button class="sf-btn sf-btn-secondary sf-hidden" id="sf-stop-record-btn" type="button">⏹️ Parar gravação</button>
+            <div id="sf-recording-indicator" class="sf-recording-indicator sf-hidden">
+              <span class="sf-recording-dot"></span>
+              <span id="sf-recording-timer">00:00</span>
+            </div>
+          </div>
+
+          <div class="sf-upload-group">
+            <label class="sf-file-input">
+              <input type="file" id="sf-audio-upload" accept="audio/*" />
+              📁 Selecionar áudio
+            </label>
+            <span class="sf-upload-hint">Formatos suportados: MP3, WAV, M4A, WebM (até 25 MB)</span>
+          </div>
+
+          <div id="sf-audio-status" class="sf-audio-status"></div>
+        </div>
+
         <button class="sf-btn sf-btn-primary" id="sf-process-btn" type="button">
           <span id="sf-process-text">🚀 Processar com IA</span>
           <div id="sf-process-spinner" class="sf-spinner sf-hidden"></div>

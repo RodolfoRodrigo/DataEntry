@@ -46,6 +46,14 @@ function resetState() {
   currentState = createInitialState();
 }
 
+const MAX_AUDIO_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+let audioRecorder = null;
+let audioChunks = [];
+let audioStream = null;
+let isRecordingAudio = false;
+let recordingStartTime = 0;
+let recordingTimerInterval = null;
+
 function ensureUniqueAliases(records) {
   const aliasCount = {};
   return records.map((record) => {
@@ -512,6 +520,267 @@ function setProcessing(isProcessing) {
   if (btn) btn.disabled = isProcessing;
   if (text) text.classList.toggle('sf-hidden', isProcessing);
   if (spinner) spinner.classList.toggle('sf-hidden', !isProcessing);
+}
+
+function setAudioStatus(message, type = 'info') {
+  const statusEl = document.getElementById('sf-audio-status');
+  if (!statusEl) return;
+  statusEl.textContent = message || '';
+  statusEl.dataset.status = type || 'info';
+}
+
+function setFileInputDisabled(disabled) {
+  const fileInput = document.getElementById('sf-audio-upload');
+  if (fileInput) fileInput.disabled = disabled;
+  const fileLabel = document.querySelector('#sf-tab-ai .sf-file-input');
+  if (fileLabel) fileLabel.classList.toggle('sf-disabled', !!disabled);
+}
+
+function setAudioTranscribing(isTranscribing) {
+  const recordBtn = document.getElementById('sf-record-btn');
+  if (recordBtn && !isRecordingAudio) {
+    recordBtn.disabled = isTranscribing;
+  }
+  setFileInputDisabled(isTranscribing || isRecordingAudio);
+}
+
+function toggleRecordingUI(isActive) {
+  const recordBtn = document.getElementById('sf-record-btn');
+  const stopBtn = document.getElementById('sf-stop-record-btn');
+  const indicator = document.getElementById('sf-recording-indicator');
+
+  if (recordBtn) {
+    recordBtn.classList.toggle('sf-hidden', isActive);
+    if (!isActive) recordBtn.disabled = false;
+  }
+
+  if (stopBtn) {
+    stopBtn.classList.toggle('sf-hidden', !isActive);
+    stopBtn.disabled = !isActive;
+  }
+
+  if (indicator) {
+    indicator.classList.toggle('sf-hidden', !isActive);
+  }
+}
+
+function updateRecordingTimerDisplay() {
+  if (!isRecordingAudio) return;
+  const timerEl = document.getElementById('sf-recording-timer');
+  if (!timerEl) return;
+
+  const elapsed = Math.max(0, Date.now() - recordingStartTime);
+  const totalSeconds = Math.floor(elapsed / 1000);
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  timerEl.textContent = `${minutes}:${seconds}`;
+}
+
+function stopRecordingTimer() {
+  if (recordingTimerInterval) {
+    clearInterval(recordingTimerInterval);
+    recordingTimerInterval = null;
+  }
+}
+
+function cleanupAudioStream() {
+  if (audioStream) {
+    try {
+      audioStream.getTracks().forEach(track => track.stop());
+    } catch (error) {
+      console.warn('Erro ao encerrar stream de áudio:', error);
+    }
+  }
+  audioStream = null;
+}
+
+async function startAudioRecording() {
+  if (isRecordingAudio) {
+    return;
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setAudioStatus('Seu navegador não suporta gravação de áudio.', 'error');
+    return;
+  }
+
+  const recordBtn = document.getElementById('sf-record-btn');
+  const stopBtn = document.getElementById('sf-stop-record-btn');
+
+  try {
+    setAudioStatus('🎙️ Preparando microfone...');
+    if (recordBtn) recordBtn.disabled = true;
+    setFileInputDisabled(true);
+
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    const recorder = new MediaRecorder(audioStream);
+    audioRecorder = recorder;
+
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+
+    recorder.onstop = async () => {
+      stopRecordingTimer();
+      toggleRecordingUI(false);
+      cleanupAudioStream();
+
+      const capturedChunks = [...audioChunks];
+      audioChunks = [];
+      audioRecorder = null;
+
+      try {
+        if (!capturedChunks.length) {
+          setAudioStatus('Nenhum áudio foi capturado.', 'error');
+          return;
+        }
+
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const extension = mimeType.includes('mp3')
+          ? 'mp3'
+          : mimeType.includes('wav')
+            ? 'wav'
+            : mimeType.includes('ogg')
+              ? 'ogg'
+              : 'webm';
+        const blob = new Blob(capturedChunks, { type: mimeType });
+
+        if (!blob || blob.size === 0) {
+          setAudioStatus('Nenhum áudio foi capturado.', 'error');
+          return;
+        }
+
+        await runAudioTranscription(blob, `gravacao.${extension}`, 'gravação de áudio');
+      } finally {
+        if (recordBtn) recordBtn.disabled = false;
+        setFileInputDisabled(false);
+      }
+    };
+
+    recorder.start();
+    isRecordingAudio = true;
+    toggleRecordingUI(true);
+    if (stopBtn) stopBtn.disabled = false;
+    recordingStartTime = Date.now();
+    updateRecordingTimerDisplay();
+    recordingTimerInterval = setInterval(updateRecordingTimerDisplay, 500);
+    setAudioStatus('🎙️ Gravando... Fale agora!');
+  } catch (error) {
+    console.error('Erro ao iniciar gravação de áudio:', error);
+    setAudioStatus(`❌ Não foi possível iniciar a gravação: ${error.message}`, 'error');
+    if (recordBtn) recordBtn.disabled = false;
+    setFileInputDisabled(false);
+    cleanupAudioStream();
+    audioRecorder = null;
+    isRecordingAudio = false;
+    stopRecordingTimer();
+  }
+}
+
+function stopAudioRecording() {
+  if (!isRecordingAudio) {
+    return;
+  }
+
+  const stopBtn = document.getElementById('sf-stop-record-btn');
+  if (stopBtn) stopBtn.disabled = true;
+
+  isRecordingAudio = false;
+  setAudioStatus('⏹️ Finalizando gravação...');
+
+  try {
+    if (audioRecorder && audioRecorder.state !== 'inactive') {
+      audioRecorder.stop();
+    }
+  } catch (error) {
+    console.error('Erro ao finalizar gravação:', error);
+    setAudioStatus(`❌ Erro ao finalizar gravação: ${error.message}`, 'error');
+  }
+}
+
+async function runAudioTranscription(blob, filename, sourceDescription) {
+  try {
+    setAudioTranscribing(true);
+    setAudioStatus(`⏳ Transcrevendo ${sourceDescription}...`);
+
+    await loadScripts();
+
+    if (!window.aiProcessor) {
+      throw new Error('AI Processor não disponível. Verifique a configuração.');
+    }
+
+    if (!window.aiProcessor.isInitialized) {
+      await window.aiProcessor.initialize();
+    }
+
+    const text = await window.aiProcessor.transcribeAudio(blob, filename);
+    const textarea = document.getElementById('sf-transcription-input');
+    if (textarea) {
+      textarea.value = text;
+      textarea.focus();
+    }
+
+    setAudioStatus(`✅ Transcrição concluída (${sourceDescription}).`, 'success');
+    showStatus('success', '✅ Áudio transcrito com sucesso! Revise o texto antes de processar.');
+  } catch (error) {
+    console.error('Erro ao transcrever áudio:', error);
+    setAudioStatus(`❌ Erro ao transcrever áudio: ${error.message}`, 'error');
+    showStatus('error', `❌ Erro ao transcrever áudio: ${error.message}`);
+  } finally {
+    setAudioTranscribing(false);
+  }
+}
+
+async function handleAudioFileSelected(event) {
+  const { files } = event.target || {};
+  const file = files && files[0];
+
+  if (!file) {
+    return;
+  }
+
+  if (isRecordingAudio) {
+    setAudioStatus('Finalize a gravação antes de enviar um arquivo.', 'error');
+    event.target.value = '';
+    return;
+  }
+
+  if (file.size > MAX_AUDIO_FILE_SIZE) {
+    setAudioStatus('❌ O arquivo selecionado ultrapassa o limite de 25 MB.', 'error');
+    event.target.value = '';
+    return;
+  }
+
+  await runAudioTranscription(file, file.name || 'audio-enviado', 'arquivo de áudio');
+  event.target.value = '';
+}
+
+function initializeAudioControls() {
+  const recordBtn = document.getElementById('sf-record-btn');
+  const stopBtn = document.getElementById('sf-stop-record-btn');
+  const uploadInput = document.getElementById('sf-audio-upload');
+
+  if (recordBtn && !recordBtn.dataset.bound) {
+    recordBtn.addEventListener('click', startAudioRecording);
+    recordBtn.dataset.bound = 'true';
+  }
+
+  if (stopBtn && !stopBtn.dataset.bound) {
+    stopBtn.addEventListener('click', stopAudioRecording);
+    stopBtn.dataset.bound = 'true';
+  }
+
+  if (uploadInput && !uploadInput.dataset.bound) {
+    uploadInput.addEventListener('change', handleAudioFileSelected);
+    uploadInput.dataset.bound = 'true';
+  }
+
+  setAudioStatus('Pronto para gravar ou enviar um áudio.');
+  setFileInputDisabled(false);
+  toggleRecordingUI(false);
 }
 
 function cancelProcess() {
@@ -1439,6 +1708,8 @@ function injectFlowInterface() {
   document.querySelectorAll('.sf-tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.tab));
   });
+
+  initializeAudioControls();
 
   makeDraggable(container, document.getElementById('sf-flow-header'));
 }
