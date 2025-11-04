@@ -16,11 +16,13 @@ function setupEventListeners() {
 // CARREGAR CONFIGURAÇÕES
 // ============================================================
 async function loadSettings() {
-  const { openai_api_key } = await chrome.storage.sync.get('openai_api_key');
-  
+  const { openai_api_key, transcription_language } = await chrome.storage.sync.get(['openai_api_key', 'transcription_language']);
+
   if (openai_api_key) {
     document.getElementById('apiKey').value = openai_api_key;
   }
+
+  document.getElementById('transcriptionLanguage').value = transcription_language || 'auto';
 }
 
 // ============================================================
@@ -28,7 +30,8 @@ async function loadSettings() {
 // ============================================================
 async function saveSettings() {
   const apiKey = document.getElementById('apiKey').value.trim();
-  
+  const language = document.getElementById('transcriptionLanguage').value || 'auto';
+
   if (!apiKey) {
     showStatus('error', '❌ Por favor, insira uma API Key');
     return;
@@ -38,11 +41,14 @@ async function saveSettings() {
     showStatus('error', '❌ API Key inválida. Deve começar com "sk-"');
     return;
   }
-  
+
   try {
-    await chrome.storage.sync.set({ openai_api_key: apiKey });
+    await chrome.storage.sync.set({
+      openai_api_key: apiKey,
+      transcription_language: language
+    });
     showStatus('success', '✅ Configurações salvas com sucesso!');
-    
+
     setTimeout(() => {
       hideStatus();
     }, 3000);
