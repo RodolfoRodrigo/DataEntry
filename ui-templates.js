@@ -1,7 +1,10 @@
 (function () {
   const flowInterfaceTemplate = `
     <div class="sf-flow-header" id="sf-flow-header">
-      <h1>🤖 Salesforce AI Assistant</h1>
+      <div class="sf-flow-header-main">
+        <h1>🤖 Salesforce AI Assistant</h1>
+        <button class="sf-flow-settings-btn" id="sf-open-settings" type="button" title="Abrir configurações">⚙️ Configurações</button>
+      </div>
       <div class="sf-flow-header-actions">
         <button class="sf-flow-btn" id="sf-minimize-flow" title="Minimizar">─</button>
         <button class="sf-flow-btn" id="sf-close-flow" title="Fechar">✕</button>
@@ -49,7 +52,6 @@
           <div id="sf-audio-status" class="sf-audio-status"></div>
           <div class="sf-audio-language">
             <span id="sf-transcription-language">Idioma atual: Detecção automática</span>
-            <button class="sf-btn-link" id="sf-open-settings" type="button">⚙️ Abrir configurações</button>
           </div>
         </div>
 

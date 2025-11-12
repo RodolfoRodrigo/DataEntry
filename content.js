@@ -573,11 +573,38 @@ function openExtensionSettings(event) {
     event.stopPropagation();
   }
 
-  if (chrome.runtime?.openOptionsPage) {
-    chrome.runtime.openOptionsPage();
-  } else {
-    const optionsUrl = chrome.runtime.getURL('options.html');
-    window.open(optionsUrl, '_blank', 'noopener');
+  const runtime = typeof chrome !== 'undefined' ? chrome.runtime : null;
+  if (!runtime) {
+    return;
+  }
+
+  const fallbackToWindow = () => {
+    try {
+      const optionsUrl = runtime.getURL('options.html');
+      if (optionsUrl) {
+        window.open(optionsUrl, '_blank', 'noopener');
+      }
+    } catch (error) {
+      console.warn('Não foi possível abrir opções via fallback:', error);
+    }
+  };
+
+  try {
+    runtime.sendMessage({ message: 'openOptions' }, response => {
+      const lastError = chrome.runtime?.lastError;
+      if (lastError) {
+        console.warn('Erro ao solicitar abertura das opções:', lastError);
+        fallbackToWindow();
+        return;
+      }
+
+      if (!response || response.ok !== true) {
+        fallbackToWindow();
+      }
+    });
+  } catch (error) {
+    console.warn('Erro inesperado ao abrir configurações:', error);
+    fallbackToWindow();
   }
 }
 
