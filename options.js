@@ -1,5 +1,7 @@
 // options.js - Gerencia configurações da extensão
 
+const DEFAULT_RECORD_NAVIGATION = 'same_tab';
+
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings();
   await loadCacheInfo();
@@ -16,13 +18,18 @@ function setupEventListeners() {
 // CARREGAR CONFIGURAÇÕES
 // ============================================================
 async function loadSettings() {
-  const { openai_api_key, transcription_language } = await chrome.storage.sync.get(['openai_api_key', 'transcription_language']);
+  const { openai_api_key, transcription_language, record_navigation_behavior } = await chrome.storage.sync.get([
+    'openai_api_key',
+    'transcription_language',
+    'record_navigation_behavior'
+  ]);
 
   if (openai_api_key) {
     document.getElementById('apiKey').value = openai_api_key;
   }
 
   document.getElementById('transcriptionLanguage').value = transcription_language || 'auto';
+  document.getElementById('recordNavigationBehavior').value = record_navigation_behavior || DEFAULT_RECORD_NAVIGATION;
 }
 
 // ============================================================
@@ -31,6 +38,7 @@ async function loadSettings() {
 async function saveSettings() {
   const apiKey = document.getElementById('apiKey').value.trim();
   const language = document.getElementById('transcriptionLanguage').value || 'auto';
+  const navigationBehavior = document.getElementById('recordNavigationBehavior').value || DEFAULT_RECORD_NAVIGATION;
 
   if (!apiKey) {
     showStatus('error', '❌ Por favor, insira uma API Key');
@@ -45,7 +53,8 @@ async function saveSettings() {
   try {
     await chrome.storage.sync.set({
       openai_api_key: apiKey,
-      transcription_language: language
+      transcription_language: language,
+      record_navigation_behavior: navigationBehavior
     });
     showStatus('success', '✅ Configurações salvas com sucesso!');
 

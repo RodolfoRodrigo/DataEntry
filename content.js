@@ -36,7 +36,8 @@ function createInitialState() {
     fields: {},
     metadata: null,
     questions: [],
-    lookupCache: new Map()
+    lookupCache: new Map(),
+    lastCreatedRecord: null
   };
 }
 
@@ -44,6 +45,10 @@ let currentState = createInitialState();
 
 function resetState() {
   currentState = createInitialState();
+  if (statePersistTimeout) {
+    clearTimeout(statePersistTimeout);
+    statePersistTimeout = null;
+  }
   clearPersistedState();
 }
 
@@ -224,6 +229,7 @@ function rebuildUIFromState() {
 }
 
 const MAX_AUDIO_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+const DEFAULT_RECORD_NAVIGATION = 'same_tab';
 let audioRecorder = null;
 let audioChunks = [];
 let audioStream = null;
@@ -456,22 +462,90 @@ function appendResultLog(record, result) {
   scheduleStatePersistence();
 }
 
-function navigateToRecordPage(objectName, recordId) {
+function finalizeRecordCreationFlow() {
+  if (statePersistTimeout) {
+    clearTimeout(statePersistTimeout);
+    statePersistTimeout = null;
+  }
+
+  currentState.step = 'idle';
+  currentState.records = [];
+  currentState.currentRecordIndex = -1;
+  currentState.currentRecordAlias = null;
+  currentState.objectName = null;
+  currentState.fields = {};
+  currentState.relationshipFields = {};
+  currentState.recordResults = {};
+  currentState.processingMultiple = false;
+  currentState.metadata = null;
+  currentState.questions = [];
+  currentState.lookupCache = new Map();
+  currentState.transcription = '';
+  currentState.resultsLog = [];
+  currentState.lastCreatedRecord = null;
+
+  resetCorrectionInput();
+  resetFieldsEditor();
+  updateRecordContextDisplay();
+
+  const transcriptionInput = document.getElementById('sf-transcription-input');
+  if (transcriptionInput) {
+    transcriptionInput.value = '';
+  }
+
+  const confirmBtn = document.getElementById('sf-confirm-insert');
+  if (confirmBtn) {
+    confirmBtn.disabled = false;
+    confirmBtn.innerHTML = '<span>✅ Criar Registro</span>';
+  }
+
+  setProcessing(false);
+  clearPersistedState();
+}
+
+function buildRecordPageUrl(objectName, recordId) {
   if (!recordId) {
-    return;
+    return null;
   }
 
   const origin = window.location.origin;
   const encodedId = encodeURIComponent(recordId);
   const isLightning = window.location.pathname.includes('/lightning');
 
-  let targetUrl = `${origin}/${encodedId}`;
-
   if (isLightning && objectName) {
-    targetUrl = `${origin}/lightning/r/${encodeURIComponent(objectName)}/${encodedId}/view`;
+    return `${origin}/lightning/r/${encodeURIComponent(objectName)}/${encodedId}/view`;
   }
 
-  window.location.assign(targetUrl);
+  return `${origin}/${encodedId}`;
+}
+
+async function openRecordPageAfterCreation(objectName, recordId) {
+  if (!recordId) {
+    return;
+  }
+
+  const targetUrl = buildRecordPageUrl(objectName, recordId);
+  if (!targetUrl) {
+    return;
+  }
+
+  let behavior = DEFAULT_RECORD_NAVIGATION;
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+    try {
+      const stored = await chrome.storage.sync.get('record_navigation_behavior');
+      if (stored && stored.record_navigation_behavior) {
+        behavior = stored.record_navigation_behavior;
+      }
+    } catch (error) {
+      console.warn('Não foi possível obter preferência de navegação do registro:', error);
+    }
+  }
+
+  if (behavior === 'new_tab') {
+    window.open(targetUrl, '_blank', 'noopener');
+  } else {
+    window.location.assign(targetUrl);
+  }
 }
 
 // ============================================================
@@ -1880,12 +1954,10 @@ async function confirmInsertion() {
     } else {
       addChatMessage('ai', '🎉 Todos os registros foram criados com sucesso!');
       showStatus('success', '🎉 Todos os registros foram criados com sucesso!');
-      currentState.step = 'completed';
-      scheduleStatePersistence();
-      persistState();
+      finalizeRecordCreationFlow();
 
       if (recordId) {
-        navigateToRecordPage(record.object, recordId);
+        await openRecordPageAfterCreation(record.object, recordId);
       }
     }
   } catch (error) {
