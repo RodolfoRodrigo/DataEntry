@@ -6,13 +6,15 @@ class AIProcessor {
     this.apiKey = null;
     this.metadataCache = new Map();
     this.isInitialized = false;
+    this.transcriptionLanguage = 'auto';
   }
 
   async initialize() {
     try {
-      const { openai_api_key } = await chrome.storage.sync.get('openai_api_key');
+      const { openai_api_key, transcription_language } = await chrome.storage.sync.get(['openai_api_key', 'transcription_language']);
       this.apiKey = openai_api_key;
-      
+      this.transcriptionLanguage = transcription_language || 'auto';
+
       const { metadata_cache } = await chrome.storage.local.get('metadata_cache');
       if (metadata_cache) {
         this.metadataCache = new Map(Object.entries(metadata_cache));
@@ -59,25 +61,89 @@ class AIProcessor {
     return JSON.parse(data.choices[0].message.content);
   }
 
+  async transcribeAudio(audioBlob, filename = 'audio.webm') {
+    const settings = await chrome.storage.sync.get(['openai_api_key', 'transcription_language']);
+    if (settings.openai_api_key) {
+      this.apiKey = settings.openai_api_key;
+    }
+    this.transcriptionLanguage = settings.transcription_language || this.transcriptionLanguage || 'auto';
+
+    if (!this.apiKey) {
+      throw new Error('API Key do OpenAI não configurada. Vá em Opções para configurar.');
+    }
+
+    const formData = new FormData();
+    formData.append('file', audioBlob, filename);
+    formData.append('model', 'gpt-4o-mini-transcribe');
+    formData.append('response_format', 'json');
+    if (this.transcriptionLanguage && this.transcriptionLanguage !== 'auto') {
+      formData.append('language', this.transcriptionLanguage);
+    }
+
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      let errorMessage = 'Unknown error';
+      try {
+        const error = await response.json();
+        errorMessage = error.error?.message || error.message || errorMessage;
+      } catch (parseError) {
+        console.warn('Erro ao ler resposta da transcrição:', parseError);
+      }
+      throw new Error(`OpenAI Audio API Error: ${errorMessage}`);
+    }
+
+    const data = await response.json();
+    const text = (data.text || '').trim();
+
+    if (!text) {
+      throw new Error('Transcrição vazia ou inválida retornada pela API.');
+    }
+
+    return text;
+  }
+
   async identifyObject(transcription) {
     const messages = [
       {
         role: 'system',
-        content: `Você é um especialista em Salesforce. Analise a transcrição e identifique:
-1. Qual objeto Salesforce está sendo mencionado (Account, Contact, Opportunity, Case, Lead, etc)
-2. Extraia todos os campos e valores mencionados
+        content: `Você é um especialista em Salesforce. Analise a transcrição e identifique todos os registros que precisam ser criados.
 
-IMPORTANTE: 
-- Se o usuário mencionar "nome completo" ou "nome" para Contact/Lead, sempre separe em FirstName e LastName
-- Nunca use o campo "Name" diretamente em Contact/Lead
-- Para outros objetos, use "Name" normalmente
+INSTRUÇÕES IMPORTANTES:
+1. Pode haver UM OU VÁRIOS registros. Detecte todos que o usuário solicitar.
+2. Respeite a ordem lógica de criação (por exemplo, criar Opportunity antes de Quote).
+3. Para Contact e Lead, se o usuário disser "nome completo" ou "nome", sempre separe em FirstName e LastName. Nunca use o campo "Name" diretamente para esses objetos.
+4. Para demais objetos, utilize o campo "Name" normalmente quando fizer sentido.
+5. Quando um registro precisar de referência (lookup) a outro registro criado no mesmo fluxo, informe explicitamente como obter o valor usando um alias.
+6. Gere aliases curtos (sem espaços) para cada registro, por exemplo "OpportunityPrincipal" ou "QuoteInicial".
+7. Use relationshipFields somente quando o valor vier de outro registro do fluxo, informando fromRecord (alias) e field (por padrão "Id").
 
-Retorne JSON no formato:
+RETORNO OBRIGATÓRIO (JSON):
 {
-  "object": "NomeDoObjeto",
-  "fields": {"FieldName": "valor", ...},
-  "confidence": 0.95
-}`
+  "records": [
+    {
+      "alias": "AliasDoRegistro",
+      "object": "NomeDoObjeto",
+      "action": "insert",
+      "fields": {"FieldName": "valor", ...},
+      "relationshipFields": {
+        "LookupField": {"fromRecord": "AliasDeOrigem", "field": "Id"}
+      },
+      "confidence": 0.95
+    }
+  ],
+  "summary": "Resumo rápido do que será criado"
+}
+
+- Sempre inclua pelo menos um registro.
+- Quando não houver dependências, retorne relationshipFields como objeto vazio.
+- Garanta que os aliases sejam únicos e consistentes.`
       },
       {
         role: 'user',

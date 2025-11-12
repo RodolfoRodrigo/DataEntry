@@ -85,7 +85,8 @@
     }
 
     input[type="text"],
-    input[type="password"] {
+    input[type="password"],
+    select {
       width: 100%;
       padding: 12px 16px;
       border: 2px solid #e9ecef;
@@ -95,9 +96,17 @@
       transition: border-color 0.3s;
     }
 
-    input:focus {
+    input:focus,
+    select:focus {
       outline: none;
       border-color: #667eea;
+    }
+
+    .field-hint {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #6c757d;
+      line-height: 1.5;
     }
 
     .btn {
@@ -223,6 +232,24 @@
 
         <label for="apiKey">Sua API Key</label>
         <input type="password" id="apiKey" placeholder="sk-proj-...">
+
+        <label for="transcriptionLanguage" style="margin-top: 20px;">Idioma da transcrição</label>
+        <select id="transcriptionLanguage">
+          <option value="auto">🌐 Detectar automaticamente</option>
+          <option value="pt">🇧🇷 Português</option>
+          <option value="en">🇺🇸 Inglês</option>
+          <option value="es">🇪🇸 Espanhol</option>
+          <option value="fr">🇫🇷 Francês</option>
+          <option value="de">🇩🇪 Alemão</option>
+          <option value="it">🇮🇹 Italiano</option>
+          <option value="ja">🇯🇵 Japonês</option>
+          <option value="zh">🇨🇳 Chinês (Mandarim)</option>
+        </select>
+
+        <div class="field-hint">
+          Escolha o idioma preferencial para as transcrições de áudio. Quando "Detectar automaticamente" estiver selecionado,
+          o modelo tentará identificar o idioma usado na gravação.
+        </div>
 
         <div class="info-box">
           <h4>📌 Como obter sua API Key:</h4>
