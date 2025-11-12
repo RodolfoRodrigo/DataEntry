@@ -44,6 +44,183 @@ let currentState = createInitialState();
 
 function resetState() {
   currentState = createInitialState();
+  clearPersistedState();
+}
+
+const STATE_STORAGE_KEY = 'sf_ai_assistant_state';
+let statePersistTimeout = null;
+
+function getSerializableLookupCache() {
+  if (!currentState.lookupCache || !(currentState.lookupCache instanceof Map)) {
+    return {};
+  }
+
+  const serialized = {};
+  currentState.lookupCache.forEach((value, key) => {
+    serialized[key] = value;
+  });
+  return serialized;
+}
+
+function getSerializableState() {
+  return {
+    step: currentState.step,
+    transcription: currentState.transcription,
+    records: currentState.records,
+    currentRecordIndex: currentState.currentRecordIndex,
+    currentRecordAlias: currentState.currentRecordAlias,
+    relationshipFields: currentState.relationshipFields,
+    recordResults: currentState.recordResults,
+    resultsLog: currentState.resultsLog,
+    processingMultiple: currentState.processingMultiple,
+    objectName: currentState.objectName,
+    fields: currentState.fields,
+    questions: currentState.questions,
+    lookupCache: getSerializableLookupCache(),
+    lastCreatedRecord: currentState.lastCreatedRecord || null,
+    metadataName: currentState.metadata?.name || null,
+    timestamp: Date.now()
+  };
+}
+
+function hasMeaningfulState(state) {
+  if (!state) return false;
+  const hasRecords = Array.isArray(state.records) && state.records.length > 0;
+  const hasFields = state.fields && Object.keys(state.fields).length > 0;
+  const hasResults = Array.isArray(state.resultsLog) && state.resultsLog.length > 0;
+  return hasRecords || hasFields || hasResults || !!state.transcription;
+}
+
+function persistState() {
+  if (typeof sessionStorage === 'undefined') {
+    return;
+  }
+  try {
+    const state = getSerializableState();
+    if (!hasMeaningfulState(state)) {
+      sessionStorage.removeItem(STATE_STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn('Não foi possível salvar o estado da extensão:', error);
+  }
+}
+
+function clearPersistedState() {
+  if (typeof sessionStorage === 'undefined') {
+    return;
+  }
+  try {
+    sessionStorage.removeItem(STATE_STORAGE_KEY);
+  } catch (error) {
+    console.warn('Não foi possível limpar o estado persistido:', error);
+  }
+}
+
+function scheduleStatePersistence() {
+  if (statePersistTimeout) {
+    clearTimeout(statePersistTimeout);
+  }
+
+  statePersistTimeout = setTimeout(() => {
+    statePersistTimeout = null;
+    persistState();
+  }, 250);
+}
+
+async function restoreStateIfAvailable() {
+  if (typeof sessionStorage === 'undefined') {
+    return false;
+  }
+  try {
+    const stored = sessionStorage.getItem(STATE_STORAGE_KEY);
+    if (!stored) {
+      return false;
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!parsed || (!Array.isArray(parsed.records) || parsed.records.length === 0) && (!parsed.fields || Object.keys(parsed.fields).length === 0)) {
+      return false;
+    }
+
+    const restored = createInitialState();
+    Object.assign(restored, parsed);
+
+    restored.lookupCache = new Map();
+    if (parsed.lookupCache && typeof parsed.lookupCache === 'object') {
+      Object.entries(parsed.lookupCache).forEach(([key, value]) => {
+        restored.lookupCache.set(key, value);
+      });
+    }
+
+    currentState = restored;
+
+    if (!window.aiProcessor) {
+      await loadScripts();
+    }
+
+    if (window.aiProcessor && window.aiProcessor.initialize && !window.aiProcessor.isInitialized) {
+      try {
+        await window.aiProcessor.initialize();
+      } catch (initError) {
+        console.warn('Não foi possível inicializar o AI Processor durante restauração:', initError);
+      }
+    }
+
+    if (!currentState.metadata && currentState.objectName && window.aiProcessor) {
+      try {
+        currentState.metadata = await window.aiProcessor.getObjectMetadata(currentState.objectName);
+      } catch (error) {
+        console.warn('Não foi possível recarregar metadados durante restauração:', error);
+      }
+    }
+
+    rebuildUIFromState();
+    return true;
+  } catch (error) {
+    console.warn('Erro ao restaurar estado da extensão:', error);
+    return false;
+  }
+}
+
+function rebuildUIFromState() {
+  injectFlowInterface();
+  openFlowUI();
+  updateRecordContextDisplay();
+
+  if (currentState.metadata) {
+    renderFieldsEditor();
+  }
+
+  if (Array.isArray(currentState.resultsLog) && currentState.resultsLog.length > 0) {
+    const resultArea = document.getElementById('sf-result-area');
+    const resultTitle = document.getElementById('sf-result-title');
+    const resultContent = document.getElementById('sf-result-content');
+
+    if (resultArea && resultTitle && resultContent) {
+      resultTitle.textContent = currentState.processingMultiple
+        ? '✅ Registros criados'
+        : '✅ Registro criado com sucesso!';
+
+      resultContent.innerHTML = currentState.resultsLog
+        .map(entry => {
+          const aliasInfo = entry.alias && entry.alias !== entry.object
+            ? ` <span class="sf-result-alias">(${entry.alias})</span>`
+            : '';
+          return `<div class="sf-result-item"><strong>${entry.object}</strong>${aliasInfo}<br><span class="sf-result-id">ID: ${entry.id}</span></div>`;
+        })
+        .join('');
+
+      resultArea.classList.remove('sf-hidden');
+    }
+  }
+
+  if (currentState.step === 'completed') {
+    showStatus('success', '🎉 Registro criado com sucesso!');
+  } else if (currentState.step && currentState.step !== 'idle') {
+    showStatus('info', '📄 Continuando do ponto onde você parou.');
+  }
 }
 
 const MAX_AUDIO_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
@@ -79,6 +256,8 @@ function ensureUniqueAliases(records) {
       alias: uniqueAlias
     };
   });
+
+  scheduleStatePersistence();
 }
 
 function normalizeIdentifiedRecords(identified) {
@@ -170,6 +349,8 @@ function resolveRelationshipFields(record) {
       currentState.fields[fieldName] = resolvedValue;
     }
   });
+
+  scheduleStatePersistence();
 }
 
 function updateDependentRecords(sourceAlias, insertResult) {
@@ -210,6 +391,8 @@ function updateCurrentRecordField(fieldName, value) {
   } else {
     record.fields[fieldName] = value;
   }
+
+  scheduleStatePersistence();
 }
 
 function updateRecordContextDisplay() {
@@ -269,6 +452,26 @@ function appendResultLog(record, result) {
 
   resultContent.innerHTML = itemsHtml;
   resultArea.classList.remove('sf-hidden');
+
+  scheduleStatePersistence();
+}
+
+function navigateToRecordPage(objectName, recordId) {
+  if (!recordId) {
+    return;
+  }
+
+  const origin = window.location.origin;
+  const encodedId = encodeURIComponent(recordId);
+  const isLightning = window.location.pathname.includes('/lightning');
+
+  let targetUrl = `${origin}/${encodedId}`;
+
+  if (isLightning && objectName) {
+    targetUrl = `${origin}/lightning/r/${encodeURIComponent(objectName)}/${encodedId}/view`;
+  }
+
+  window.location.assign(targetUrl);
 }
 
 // ============================================================
@@ -936,6 +1139,7 @@ async function prepareRecordForReview(recordIndex) {
   record.enriched = enriched;
   currentState.step = 'ready';
   updateRecordContextDisplay();
+  scheduleStatePersistence();
 }
 
 async function processTranscriptionFull() {
@@ -952,6 +1156,7 @@ async function processTranscriptionFull() {
     resetUI();
     setProcessing(true);
     currentState.transcription = transcription;
+    scheduleStatePersistence();
 
     showStatus('info', '🔍 Analisando transcrição com IA...');
 
@@ -981,6 +1186,7 @@ async function processTranscriptionFull() {
     }));
 
     currentState.processingMultiple = currentState.records.length > 1;
+    scheduleStatePersistence();
 
     if (currentState.processingMultiple) {
       const summaryList = currentState.records
@@ -1037,6 +1243,8 @@ async function processLookupFields(transcription) {
       console.warn('Erro ao processar lookup', lookupField.name, error);
     }
   }
+
+  scheduleStatePersistence();
 }
 
 async function extractLookupSearchTerm(transcription, lookupField) {
@@ -1114,6 +1322,7 @@ async function handleEnrichmentIssues(enriched) {
     addChatMessage('ai', currentState.questions.join('\n\n'));
     showCorrectionInput();
     showStatus('warning', '⚠️ Preciso de mais informações para continuar.');
+    scheduleStatePersistence();
     return;
   }
 
@@ -1147,6 +1356,7 @@ async function showConfirmationSummary() {
   updateRecordContextDisplay();
   renderFieldsEditor();
   showStatus('success', '✅ Dados prontos para revisão.');
+  scheduleStatePersistence();
 }
 
 function renderFieldsEditor() {
@@ -1372,6 +1582,7 @@ function setupLookupInput(container, fieldName, fieldMeta) {
 
       const results = await searchLookupRealtime(fieldName, term);
       currentState.lookupCache.set(fieldName, results);
+      scheduleStatePersistence();
 
       if (!results || results.length === 0) {
         resultsDiv.innerHTML = '<div class="sf-lookup-empty">Nenhum registro encontrado</div>';
@@ -1639,10 +1850,20 @@ async function confirmInsertion() {
     record.status = 'completed';
     currentState.recordResults[record.alias] = result;
 
+    const recordId = result?.id || result?.Id || null;
+    if (recordId) {
+      currentState.lastCreatedRecord = {
+        object: record.object,
+        alias: record.alias,
+        id: recordId
+      };
+    }
+
     appendResultLog(record, result);
     showInsertSuccess(result, record);
 
     updateDependentRecords(record.alias, result);
+    scheduleStatePersistence();
 
     const nextIndex = recordIndex + 1;
     if (nextIndex < currentState.records.length) {
@@ -1659,9 +1880,13 @@ async function confirmInsertion() {
     } else {
       addChatMessage('ai', '🎉 Todos os registros foram criados com sucesso!');
       showStatus('success', '🎉 Todos os registros foram criados com sucesso!');
-      resetFieldsEditor();
       currentState.step = 'completed';
-      resetState();
+      scheduleStatePersistence();
+      persistState();
+
+      if (recordId) {
+        navigateToRecordPage(record.object, recordId);
+      }
     }
   } catch (error) {
     showInsertError(error, record);
@@ -1947,11 +2172,12 @@ function injectFloatingButton() {
 }
 
 function initExtension() {
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       injectFloatingButton();
       injectFlowInterface();
-      loadScripts().catch(err => console.error('Erro ao carregar scripts:', err));
+      await loadScripts();
+      await restoreStateIfAvailable();
     } catch (error) {
       console.error('Erro na inicialização:', error);
     }
@@ -1976,6 +2202,14 @@ if (document.readyState === 'loading') {
 } else {
   initExtension();
 }
+
+window.addEventListener('beforeunload', () => {
+  try {
+    persistState();
+  } catch (error) {
+    console.warn('Não foi possível persistir o estado antes de sair da página:', error);
+  }
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
