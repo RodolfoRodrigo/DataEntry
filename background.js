@@ -108,7 +108,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return;
       }
 
-      // --- 3️⃣ Criar nova janela (opcional) ---
+      // --- 3️⃣ Abrir página de opções ---
+      if (request.message === "openOptions") {
+        const openOptions = () =>
+          new Promise(resolve => {
+            if (chrome.runtime.openOptionsPage) {
+              chrome.runtime.openOptionsPage(() => {
+                if (chrome.runtime.lastError) {
+                  resolve({ ok: false, error: chrome.runtime.lastError.message });
+                } else {
+                  resolve({ ok: true });
+                }
+              });
+            } else {
+              resolve({ ok: false, error: "openOptionsPage not available" });
+            }
+          });
+
+        let result = await openOptions();
+        if (!result.ok) {
+          const optionsUrl = chrome.runtime.getURL("options.html");
+          await new Promise(resolve => {
+            chrome.tabs.create({ url: optionsUrl }, () => {
+              if (chrome.runtime.lastError) {
+                result = { ok: false, error: chrome.runtime.lastError.message };
+              } else {
+                result = { ok: true, fallback: true };
+              }
+              resolve();
+            });
+          });
+        }
+
+        sendResponse(result);
+        return;
+      }
+
+      // --- 4️⃣ Criar nova janela (opcional) ---
       if (request.message === "createWindow") {
         const brow = typeof browser === "undefined" ? chrome : browser;
         brow.windows.create({
@@ -119,7 +155,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return;
       }
 
-      // --- 4️⃣ Recarregar aba atual ---
+      // --- 5️⃣ Recarregar aba atual ---
       if (request.message === "reloadPage") {
         chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
           if (tabs[0]) chrome.tabs.reload(tabs[0].id);
@@ -128,7 +164,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return;
       }
 
-      // --- 5️⃣ Fazer chamada REST ao Salesforce (sem CORS) ---
+      // --- 6️⃣ Fazer chamada REST ao Salesforce (sem CORS) ---
       if (request.message === "callApi") {
         const { session, path, method = "GET", body = null } = request;
         const url = `https://${session.hostname}${path}`;

@@ -40,6 +40,12 @@
   position: relative;
 }
 
+.sf-flow-header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .sf-flow-header::before {
   content: '⋮⋮';
   position: absolute;
@@ -56,6 +62,32 @@
   font-weight: 600;
   margin: 0;
   margin-left: 24px;
+}
+
+.sf-flow-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.sf-flow-settings-btn:hover,
+.sf-flow-settings-btn:focus {
+  background: rgba(255, 255, 255, 0.28);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.sf-flow-settings-btn:active {
+  transform: translateY(0);
 }
 
 .sf-flow-header-actions {
