@@ -37,7 +37,11 @@ function createInitialState() {
     metadata: null,
     questions: [],
     lookupCache: new Map(),
-    lastCreatedRecord: null
+    lastCreatedRecord: null,
+    isFlowOpen: false,
+    isFlowMinimized: false,
+    flowPosition: null,
+    flowHeight: null
   };
 }
 
@@ -84,7 +88,11 @@ function getSerializableState() {
     lookupCache: getSerializableLookupCache(),
     lastCreatedRecord: currentState.lastCreatedRecord || null,
     metadataName: currentState.metadata?.name || null,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    isFlowOpen: currentState.isFlowOpen,
+    isFlowMinimized: currentState.isFlowMinimized,
+    flowPosition: currentState.flowPosition,
+    flowHeight: currentState.flowHeight
   };
 }
 
@@ -93,31 +101,45 @@ function hasMeaningfulState(state) {
   const hasRecords = Array.isArray(state.records) && state.records.length > 0;
   const hasFields = state.fields && Object.keys(state.fields).length > 0;
   const hasResults = Array.isArray(state.resultsLog) && state.resultsLog.length > 0;
-  return hasRecords || hasFields || hasResults || !!state.transcription;
+  const hasUIState = !!state.isFlowOpen || !!state.isFlowMinimized;
+  return hasRecords || hasFields || hasResults || !!state.transcription || hasUIState;
 }
 
 function persistState() {
-  if (typeof sessionStorage === 'undefined') {
+  if (!chrome?.storage?.local) {
     return;
   }
+
   try {
     const state = getSerializableState();
     if (!hasMeaningfulState(state)) {
-      sessionStorage.removeItem(STATE_STORAGE_KEY);
+      clearPersistedState();
       return;
     }
-    sessionStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(state));
+
+    const payload = {};
+    payload[STATE_STORAGE_KEY] = state;
+    chrome.storage.local.set(payload, () => {
+      if (chrome.runtime.lastError) {
+        console.warn('Não foi possível salvar o estado da extensão:', chrome.runtime.lastError);
+      }
+    });
   } catch (error) {
     console.warn('Não foi possível salvar o estado da extensão:', error);
   }
 }
 
 function clearPersistedState() {
-  if (typeof sessionStorage === 'undefined') {
+  if (!chrome?.storage?.local) {
     return;
   }
+
   try {
-    sessionStorage.removeItem(STATE_STORAGE_KEY);
+    chrome.storage.local.remove(STATE_STORAGE_KEY, () => {
+      if (chrome.runtime.lastError) {
+        console.warn('Não foi possível limpar o estado persistido:', chrome.runtime.lastError);
+      }
+    });
   } catch (error) {
     console.warn('Não foi possível limpar o estado persistido:', error);
   }
@@ -135,26 +157,32 @@ function scheduleStatePersistence() {
 }
 
 async function restoreStateIfAvailable() {
-  if (typeof sessionStorage === 'undefined') {
+  if (!chrome?.storage?.local) {
     return false;
   }
-  try {
-    const stored = sessionStorage.getItem(STATE_STORAGE_KEY);
-    if (!stored) {
-      return false;
-    }
 
-    const parsed = JSON.parse(stored);
-    if (!parsed || (!Array.isArray(parsed.records) || parsed.records.length === 0) && (!parsed.fields || Object.keys(parsed.fields).length === 0)) {
+  try {
+    const stored = await new Promise(resolve => {
+      chrome.storage.local.get([STATE_STORAGE_KEY], result => {
+        if (chrome.runtime.lastError) {
+          console.warn('Erro ao obter estado persistido:', chrome.runtime.lastError);
+          resolve(null);
+          return;
+        }
+        resolve(result?.[STATE_STORAGE_KEY] || null);
+      });
+    });
+
+    if (!stored || !hasMeaningfulState(stored)) {
       return false;
     }
 
     const restored = createInitialState();
-    Object.assign(restored, parsed);
+    Object.assign(restored, stored);
 
     restored.lookupCache = new Map();
-    if (parsed.lookupCache && typeof parsed.lookupCache === 'object') {
-      Object.entries(parsed.lookupCache).forEach(([key, value]) => {
+    if (stored.lookupCache && typeof stored.lookupCache === 'object') {
+      Object.entries(stored.lookupCache).forEach(([key, value]) => {
         restored.lookupCache.set(key, value);
       });
     }
@@ -191,7 +219,26 @@ async function restoreStateIfAvailable() {
 
 function rebuildUIFromState() {
   injectFlowInterface();
-  openFlowUI();
+  const container = document.getElementById('sf-ai-flow-container');
+
+  if (container && currentState.flowPosition) {
+    applyStoredFlowPosition(container);
+  }
+
+  if (container && currentState.flowHeight && !currentState.isFlowMinimized) {
+    container.style.height = `${currentState.flowHeight}px`;
+  }
+
+  const hasData = (Array.isArray(currentState.records) && currentState.records.length > 0)
+    || (currentState.fields && Object.keys(currentState.fields).length > 0)
+    || !!currentState.transcription
+    || (Array.isArray(currentState.resultsLog) && currentState.resultsLog.length > 0);
+
+  if (currentState.isFlowOpen || hasData) {
+    openFlowUI({ preservePosition: true });
+  }
+
+  applyMinimizedState(!!currentState.isFlowMinimized);
   updateRecordContextDisplay();
 
   if (currentState.metadata) {
@@ -2159,6 +2206,34 @@ function switchTab(tabName) {
   if (tabContent) tabContent.classList.add('sf-tab-active');
 }
 
+function saveFlowPosition(element) {
+  if (!element) return;
+
+  const top = parseFloat(element.style.top || element.offsetTop || 0);
+  const left = parseFloat(element.style.left || element.offsetLeft || 0);
+
+  currentState.flowPosition = {
+    top: Number.isFinite(top) ? top : 0,
+    left: Number.isFinite(left) ? left : 0
+  };
+  scheduleStatePersistence();
+}
+
+function applyStoredFlowPosition(element) {
+  if (!element || !currentState.flowPosition) return;
+
+  const { top, left } = currentState.flowPosition;
+  if (typeof top === 'number') {
+    element.style.top = `${top}px`;
+  }
+  if (typeof left === 'number') {
+    element.style.left = `${left}px`;
+  }
+  element.style.bottom = 'auto';
+  element.style.right = 'auto';
+  element.dataset.positioned = 'true';
+}
+
 function makeDraggable(element, handle) {
   let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
   let isDragging = false;
@@ -2203,6 +2278,8 @@ function makeDraggable(element, handle) {
     element.style.left = newLeft + 'px';
     element.style.bottom = 'auto';
     element.style.right = 'auto';
+
+    saveFlowPosition(element);
   }
 
   function closeDragElement() {
@@ -2213,13 +2290,24 @@ function makeDraggable(element, handle) {
   }
 }
 
-function openFlowUI() {
+function openFlowUI(options = {}) {
+  const { preservePosition = false } = options;
   const container = document.getElementById('sf-ai-flow-container');
   if (!container) return;
 
-  container.classList.add('active');
+  const wasActive = container.classList.contains('active');
+  if (!wasActive) {
+    container.classList.add('active');
+  }
 
-  if (!container.dataset.positioned) {
+  if (!currentState.isFlowOpen) {
+    currentState.isFlowOpen = true;
+    scheduleStatePersistence();
+  }
+
+  if (preservePosition && currentState.flowPosition) {
+    applyStoredFlowPosition(container);
+  } else if (!container.dataset.positioned) {
     const windowWidth = window.innerWidth;
     const windowHeight = window.innerHeight;
     const containerWidth = container.offsetWidth || 520;
@@ -2231,6 +2319,16 @@ function openFlowUI() {
     container.style.bottom = 'auto';
 
     container.dataset.positioned = 'true';
+
+    saveFlowPosition(container);
+  }
+
+  if (!currentState.isFlowMinimized) {
+    const height = parseFloat(container.style.height || container.offsetHeight || 0);
+    if (Number.isFinite(height) && height > 0) {
+      currentState.flowHeight = height;
+      scheduleStatePersistence();
+    }
   }
 }
 
@@ -2239,34 +2337,67 @@ function closeFlowUI() {
   if (container) {
     container.classList.remove('active');
   }
+
+  if (currentState.isFlowOpen) {
+    currentState.isFlowOpen = false;
+    scheduleStatePersistence();
+  }
 }
 
 let isMinimized = false;
 let previousHeight = '640px';
 
-function minimizeFlowUI() {
+function applyMinimizedState(shouldMinimize) {
   const container = document.getElementById('sf-ai-flow-container');
   const content = document.querySelector('.sf-flow-content');
   const minimizeBtn = document.getElementById('sf-minimize-flow');
 
   if (!container || !content || !minimizeBtn) return;
 
-  if (!isMinimized) {
-    previousHeight = container.style.height || '640px';
+  if (isMinimized === shouldMinimize && currentState.isFlowMinimized === shouldMinimize) {
+    if (!shouldMinimize) {
+      const height = parseFloat(container.style.height || container.offsetHeight || 0);
+      if (Number.isFinite(height) && height > 0) {
+        currentState.flowHeight = height;
+        scheduleStatePersistence();
+      }
+    }
+    return;
+  }
+
+  if (shouldMinimize) {
+    const currentHeight = parseFloat(container.style.height || container.offsetHeight || currentState.flowHeight || 640);
+    previousHeight = Number.isFinite(currentHeight) && currentHeight > 0 ? `${currentHeight}px` : '640px';
     container.style.height = 'auto';
     container.style.resize = 'none';
     content.style.display = 'none';
     minimizeBtn.textContent = '□';
     minimizeBtn.title = 'Maximizar';
-    isMinimized = true;
   } else {
-    container.style.height = previousHeight;
+    const storedHeight = Number.isFinite(currentState.flowHeight) && currentState.flowHeight > 0
+      ? `${currentState.flowHeight}px`
+      : (previousHeight || '640px');
+    container.style.height = storedHeight;
     container.style.resize = 'both';
     content.style.display = 'block';
     minimizeBtn.textContent = '─';
     minimizeBtn.title = 'Minimizar';
-    isMinimized = false;
+
+    const height = parseFloat(container.style.height || container.offsetHeight || 0);
+    if (Number.isFinite(height) && height > 0) {
+      currentState.flowHeight = height;
+      previousHeight = `${height}px`;
+      scheduleStatePersistence();
+    }
   }
+
+  isMinimized = shouldMinimize;
+  currentState.isFlowMinimized = shouldMinimize;
+  scheduleStatePersistence();
+}
+
+function minimizeFlowUI() {
+  applyMinimizedState(!isMinimized);
 }
 
 function injectFloatingButton() {
@@ -2294,6 +2425,68 @@ function injectFloatingButton() {
   document.body.appendChild(button);
 }
 
+let uiObserver = null;
+let ensureUiTimeout = null;
+
+function ensureUiElements() {
+  if (!document.body) {
+    return;
+  }
+
+  injectFloatingButton();
+
+  if (!document.getElementById('sf-ai-flow-container')) {
+    injectFlowInterface();
+  }
+
+  const container = document.getElementById('sf-ai-flow-container');
+
+  const hasData = (Array.isArray(currentState.records) && currentState.records.length > 0)
+    || (currentState.fields && Object.keys(currentState.fields).length > 0)
+    || !!currentState.transcription
+    || (Array.isArray(currentState.resultsLog) && currentState.resultsLog.length > 0);
+  const shouldOpen = currentState.isFlowOpen || currentState.isFlowMinimized || hasData;
+  if (shouldOpen && container) {
+    if (!container.classList.contains('active')) {
+      openFlowUI({ preservePosition: true });
+    }
+
+    if (!!currentState.isFlowMinimized !== isMinimized) {
+      applyMinimizedState(!!currentState.isFlowMinimized);
+    }
+  }
+}
+
+function scheduleEnsureUiElements() {
+  if (ensureUiTimeout) {
+    return;
+  }
+
+  ensureUiTimeout = setTimeout(() => {
+    ensureUiTimeout = null;
+    ensureUiElements();
+  }, 200);
+}
+
+function startUiObserver() {
+  if (uiObserver) {
+    return;
+  }
+
+  const body = document.body;
+  if (!body) {
+    setTimeout(startUiObserver, 250);
+    return;
+  }
+
+  uiObserver = new MutationObserver(() => {
+    scheduleEnsureUiElements();
+  });
+
+  uiObserver.observe(body, { childList: true, subtree: true });
+  ensureUiElements();
+}
+
 function initExtension() {
   setTimeout(async () => {
     try {
@@ -2301,6 +2494,7 @@ function initExtension() {
       injectFlowInterface();
       await loadScripts();
       await restoreStateIfAvailable();
+      startUiObserver();
     } catch (error) {
       console.error('Erro na inicialização:', error);
     }
