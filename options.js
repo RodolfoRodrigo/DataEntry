@@ -29,7 +29,20 @@ async function loadSettings() {
   }
 
   document.getElementById('transcriptionLanguage').value = transcription_language || 'auto';
-  document.getElementById('recordNavigationBehavior').value = record_navigation_behavior || DEFAULT_RECORD_NAVIGATION;
+
+  const normalizedNavigation = record_navigation_behavior === 'background_tab'
+    ? 'background_tab'
+    : DEFAULT_RECORD_NAVIGATION;
+
+  document.getElementById('recordNavigationBehavior').value = normalizedNavigation;
+
+  if (record_navigation_behavior === 'same_tab') {
+    try {
+      await chrome.storage.sync.set({ record_navigation_behavior: normalizedNavigation });
+    } catch (error) {
+      console.warn('Não foi possível atualizar a preferência antiga de navegação:', error);
+    }
+  }
 }
 
 // ============================================================
