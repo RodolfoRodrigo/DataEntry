@@ -134,6 +134,36 @@ function scheduleStatePersistence() {
   }, 250);
 }
 
+function markAutoOpenAfterNavigation() {
+  if (typeof sessionStorage === 'undefined') {
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(AUTO_OPEN_FLAG_KEY, '1');
+  } catch (error) {
+    console.warn('Não foi possível definir auto abertura da extensão após navegação:', error);
+  }
+}
+
+function consumeAutoOpenFlag() {
+  if (typeof sessionStorage === 'undefined') {
+    return false;
+  }
+
+  try {
+    const flag = sessionStorage.getItem(AUTO_OPEN_FLAG_KEY);
+    if (flag) {
+      sessionStorage.removeItem(AUTO_OPEN_FLAG_KEY);
+      return flag === '1';
+    }
+  } catch (error) {
+    console.warn('Não foi possível ler a preferência de auto abertura da extensão:', error);
+  }
+
+  return false;
+}
+
 async function restoreStateIfAvailable() {
   if (typeof sessionStorage === 'undefined') {
     return false;
@@ -229,7 +259,8 @@ function rebuildUIFromState() {
 }
 
 const MAX_AUDIO_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
-const DEFAULT_RECORD_NAVIGATION = 'same_tab';
+const DEFAULT_RECORD_NAVIGATION = 'new_tab';
+const AUTO_OPEN_FLAG_KEY = 'sf_ai_assistant_auto_open';
 let audioRecorder = null;
 let audioChunks = [];
 let audioStream = null;
@@ -544,6 +575,7 @@ async function openRecordPageAfterCreation(objectName, recordId) {
   if (behavior === 'new_tab') {
     window.open(targetUrl, '_blank', 'noopener');
   } else {
+    markAutoOpenAfterNavigation();
     window.location.assign(targetUrl);
   }
 }
@@ -2249,7 +2281,12 @@ function initExtension() {
       injectFloatingButton();
       injectFlowInterface();
       await loadScripts();
-      await restoreStateIfAvailable();
+      const restored = await restoreStateIfAvailable();
+      const shouldAutoOpen = consumeAutoOpenFlag();
+
+      if (!restored && shouldAutoOpen) {
+        openFlowUI();
+      }
     } catch (error) {
       console.error('Erro na inicialização:', error);
     }

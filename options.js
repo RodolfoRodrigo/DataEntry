@@ -1,6 +1,6 @@
 // options.js - Gerencia configurações da extensão
 
-const DEFAULT_RECORD_NAVIGATION = 'same_tab';
+const DEFAULT_RECORD_NAVIGATION = 'new_tab';
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings();
