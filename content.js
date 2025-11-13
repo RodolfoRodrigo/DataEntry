@@ -493,13 +493,21 @@ function appendResultLog(record, result) {
   scheduleStatePersistence();
 }
 
-function finalizeRecordCreationFlow() {
+function finalizeRecordCreationFlow(options = {}) {
+  const { preserveResults = true } = options;
+
   if (statePersistTimeout) {
     clearTimeout(statePersistTimeout);
     statePersistTimeout = null;
   }
 
-  currentState.step = 'idle';
+  const resultsSnapshot = preserveResults && Array.isArray(currentState.resultsLog)
+    ? currentState.resultsLog.slice()
+    : [];
+  const lastCreatedSnapshot = preserveResults && currentState.lastCreatedRecord
+    ? { ...currentState.lastCreatedRecord }
+    : null;
+
   currentState.records = [];
   currentState.currentRecordIndex = -1;
   currentState.currentRecordAlias = null;
@@ -512,8 +520,9 @@ function finalizeRecordCreationFlow() {
   currentState.questions = [];
   currentState.lookupCache = new Map();
   currentState.transcription = '';
-  currentState.resultsLog = [];
-  currentState.lastCreatedRecord = null;
+  currentState.resultsLog = resultsSnapshot;
+  currentState.lastCreatedRecord = lastCreatedSnapshot;
+  currentState.step = preserveResults && resultsSnapshot.length > 0 ? 'completed' : 'idle';
 
   resetCorrectionInput();
   resetFieldsEditor();
@@ -531,7 +540,12 @@ function finalizeRecordCreationFlow() {
   }
 
   setProcessing(false);
-  clearPersistedState();
+
+  if (preserveResults && resultsSnapshot.length > 0) {
+    persistState();
+  } else {
+    clearPersistedState();
+  }
 }
 
 function buildRecordPageUrl(objectName, recordId) {
