@@ -703,6 +703,8 @@ async function getObjectMetadata(objectName) {
     throw new Error(`Salesforce Error: ${data[0].message}`);
   }
 
+  const validationRules = await getValidationRules(objectName);
+
   const metadata = result.data;
   return {
     name: metadata.name,
@@ -720,8 +722,53 @@ async function getObjectMetadata(objectName) {
       defaultedOnCreate: f.defaultedOnCreate,
       picklistValues: f.picklistValues,
       referenceTo: f.referenceTo
-    }))
+    })),
+    validationRules,
+    cachedAt: new Date().toISOString()
   };
+}
+
+async function getValidationRules(objectName) {
+  if (!window.__SF_SESSION__) {
+    await ensureSession();
+    if (!window.__SF_SESSION__) throw new Error("Session not available");
+  }
+
+  const session = window.__SF_SESSION__;
+  const sanitizedObjectName = objectName.replace(/'/g, "\\'");
+  const query =
+    "SELECT Id, ValidationName, Active, ErrorDisplayField, ErrorMessage, Metadata " +
+    "FROM ValidationRule WHERE EntityDefinition.DeveloperName = '" +
+    sanitizedObjectName +
+    "'";
+
+  const path = `/services/data/v61.0/tooling/query?q=${encodeURIComponent(query)}`;
+
+  const result = await bgSend({
+    message: "callApi",
+    session,
+    path,
+    method: "GET"
+  });
+
+  if (!result.ok) {
+    console.warn("Erro ao buscar regras de validação:", result.error || result.data);
+    return [];
+  }
+
+  const data = result.data;
+  const records = data?.records || [];
+
+  return records.map(rule => ({
+    id: rule.Id,
+    name: rule.ValidationName,
+    active: rule.Active,
+    errorMessage: rule.ErrorMessage,
+    errorDisplayField: rule.ErrorDisplayField || null,
+    formula: rule.Metadata?.errorConditionFormula || null,
+    description: rule.Metadata?.description || null,
+    source: "salesforce"
+  }));
 }
 
 async function insertRecord(objectName, fields) {

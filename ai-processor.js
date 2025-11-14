@@ -7,6 +7,7 @@ class AIProcessor {
     this.metadataCache = new Map();
     this.isInitialized = false;
     this.transcriptionLanguage = 'auto';
+    this.customRules = {};
   }
 
   async initialize() {
@@ -19,12 +20,31 @@ class AIProcessor {
       if (metadata_cache) {
         this.metadataCache = new Map(Object.entries(metadata_cache));
       }
-      
+
+      await this.loadCustomRules();
+
       this.isInitialized = true;
       console.log('✅ AI Processor inicializado');
+
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'sync' && changes.custom_validation_rules) {
+          this.customRules = changes.custom_validation_rules.newValue || {};
+          console.log('🔄 Regras de validação personalizadas atualizadas');
+        }
+      });
     } catch (error) {
       console.error('❌ Erro ao inicializar AI Processor:', error);
       throw error;
+    }
+  }
+
+  async loadCustomRules() {
+    try {
+      const { custom_validation_rules } = await chrome.storage.sync.get('custom_validation_rules');
+      this.customRules = custom_validation_rules || {};
+    } catch (error) {
+      console.warn('Não foi possível carregar regras de validação personalizadas:', error);
+      this.customRules = {};
     }
   }
 
@@ -157,30 +177,62 @@ RETORNO OBRIGATÓRIO (JSON):
   async getObjectMetadata(objectName) {
     // Verifica cache primeiro
     if (this.metadataCache.has(objectName)) {
-      console.log(`✅ Metadados de ${objectName} carregados do cache`);
-      return this.metadataCache.get(objectName);
+      const cached = this.metadataCache.get(objectName);
+      const enriched = this.enrichMetadataWithCustomRules(objectName, cached);
+      if (window.metadataChunker) {
+        window.metadataChunker.chunkMetadata(objectName, enriched);
+      }
+      const fieldsCount = enriched.fields?.length || 0;
+      const rulesCount = enriched.validationRules?.length || 0;
+      console.log(`✅ Metadados de ${objectName} carregados do cache (${fieldsCount} campos, ${rulesCount} regras)`);
+      return enriched;
     }
 
     // Usa função global que já está no content.js
     if (typeof window.getObjectMetadata === 'function') {
       console.log(`📡 Usando função global para buscar metadados de ${objectName}`);
       const metadata = await window.getObjectMetadata(objectName);
-      
-      // Cria chunks do metadata para RAG
-      if (window.metadataChunker) {
-        console.log('🧩 Criando chunks do metadata...');
-        window.metadataChunker.chunkMetadata(objectName, metadata);
+      if (!metadata.cachedAt) {
+        metadata.cachedAt = new Date().toISOString();
       }
-      
+
       // Salva no cache
       this.metadataCache.set(objectName, metadata);
-      this.saveMetadataCache();
-      console.log(`✅ Metadados de ${objectName} salvos no cache`);
-      
-      return metadata;
+      await this.saveMetadataCache();
+
+      const enriched = this.enrichMetadataWithCustomRules(objectName, metadata);
+      if (window.metadataChunker) {
+        console.log('🧩 Atualizando chunks do metadata...');
+        window.metadataChunker.chunkMetadata(objectName, enriched);
+      }
+      const fieldsCount = enriched.fields?.length || 0;
+      const rulesCount = enriched.validationRules?.length || 0;
+      console.log(`✅ Metadados de ${objectName} salvos no cache (${fieldsCount} campos, ${rulesCount} regras)`);
+
+      return enriched;
     }
-    
+
     throw new Error('Função getObjectMetadata não disponível. Certifique-se de estar em uma página Salesforce.');
+  }
+
+  enrichMetadataWithCustomRules(objectName, metadata) {
+    if (!metadata) return null;
+
+    const metadataClone = JSON.parse(JSON.stringify(metadata));
+    metadataClone.validationRules = Array.isArray(metadataClone.validationRules)
+      ? metadataClone.validationRules.map(rule => ({ ...rule, source: rule.source || 'salesforce' }))
+      : [];
+
+    const customRules = this.customRules?.[objectName] || [];
+    metadataClone.customValidationRules = customRules.map(rule => ({ ...rule }));
+
+    if (customRules.length > 0) {
+      metadataClone.validationRules = metadataClone.validationRules.concat(
+        customRules.map(rule => ({ ...rule, source: 'custom' }))
+      );
+    }
+
+    return metadataClone;
   }
 
   async validateAndEnrichFields(objectName, fields, transcription) {

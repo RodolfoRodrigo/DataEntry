@@ -211,6 +211,130 @@
       font-family: monospace;
       color: #6c757d;
     }
+
+    .cache-object-title {
+      font-weight: 600;
+      color: #343a40;
+    }
+
+    .cache-object-details {
+      font-size: 12px;
+      color: #6c757d;
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+
+    .validation-info {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 8px;
+      margin-top: 16px;
+    }
+
+    .validation-object {
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      background: white;
+    }
+
+    .validation-object summary {
+      font-weight: 600;
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .validation-object summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .validation-object summary::before {
+      content: '▼';
+      display: inline-block;
+      margin-right: 4px;
+      transition: transform 0.2s ease;
+      font-size: 12px;
+      color: #764ba2;
+    }
+
+    .validation-object[open] summary::before {
+      transform: rotate(180deg);
+    }
+
+    .rule-item {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #e9ecef;
+      background: #fdfdfe;
+      font-size: 13px;
+      color: #495057;
+    }
+
+    .rule-item.custom-rule {
+      border-color: #ffd166;
+      background: #fff8e6;
+    }
+
+    .rule-item .rule-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #343a40;
+    }
+
+    .rule-item .rule-meta {
+      font-size: 12px;
+      color: #868e96;
+      margin-bottom: 4px;
+    }
+
+    .rule-item button.remove-rule {
+      background: transparent;
+      border: none;
+      color: #d6336c;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .rule-item button.remove-rule:hover {
+      text-decoration: underline;
+    }
+
+    .custom-rule-form {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+
+    .custom-rule-form h4 {
+      font-size: 14px;
+      margin-bottom: 12px;
+      color: #495057;
+    }
+
+    .custom-rule-form .form-row {
+      margin-bottom: 12px;
+    }
+
+    .custom-rule-form textarea {
+      width: 100%;
+      min-height: 80px;
+      padding: 12px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      font-size: 14px;
+      resize: vertical;
+      font-family: 'SF Mono', Monaco, monospace;
+    }
   </style>
 </head>
 <body>
@@ -294,6 +418,44 @@
 
         <div style="margin-top: 16px;">
           <button id="clearCacheBtn" class="btn btn-secondary">🗑️ Limpar Cache</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">
+          ✅ Regras de Validação
+        </div>
+        <div class="section-desc">
+          Visualize as regras de validação descobertas na sua org e adicione regras personalizadas para complementar o assistente.
+        </div>
+
+        <div id="validationRulesInfo" class="validation-info">
+          <div id="validationRulesList"></div>
+        </div>
+
+        <div class="custom-rule-form">
+          <h4>➕ Adicionar regra personalizada</h4>
+          <div class="form-row">
+            <label for="ruleObject">Objeto</label>
+            <select id="ruleObject"></select>
+          </div>
+          <div class="form-row">
+            <label for="ruleName">Nome da regra</label>
+            <input type="text" id="ruleName" placeholder="RegraCampoObrigatorio">
+          </div>
+          <div class="form-row">
+            <label for="ruleMessage">Mensagem de erro</label>
+            <textarea id="ruleMessage" placeholder="Mensagem exibida quando a regra é violada"></textarea>
+          </div>
+          <div class="form-row">
+            <label for="ruleFields">Campos relacionados (opcional)</label>
+            <input type="text" id="ruleFields" placeholder="Ex: FirstName, LastName">
+          </div>
+          <div class="form-row">
+            <label for="ruleFormula">Fórmula ou descrição (opcional)</label>
+            <textarea id="ruleFormula" placeholder="Descreva a lógica da regra"></textarea>
+          </div>
+          <button id="addRuleBtn" class="btn btn-primary" type="button">Adicionar Regra Personalizada</button>
         </div>
       </div>
 
