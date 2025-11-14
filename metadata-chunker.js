@@ -88,14 +88,50 @@ class MetadataChunker {
       chunks.push(fieldChunk);
     });
 
-    // CHUNK N+1: Regras de validação comuns
+    // CHUNK N+1: Regras de validação
+    const combinedRules = [];
+
+    if (Array.isArray(metadata.validationRules) && metadata.validationRules.length > 0) {
+      metadata.validationRules.forEach(rule => {
+        combinedRules.push({
+          type: rule.type || 'salesforce_validation_rule',
+          source: rule.source || 'salesforce',
+          name: rule.name || rule.ValidationName || 'Validation Rule',
+          description: rule.errorMessage || rule.description || '',
+          fields: rule.fields || (rule.errorDisplayField ? [rule.errorDisplayField] : []),
+          errorMessage: rule.errorMessage || rule.message || '',
+          errorDisplayField: rule.errorDisplayField || null,
+          formula: rule.formula || null,
+          active: rule.active !== false
+        });
+      });
+    }
+
+    if (Array.isArray(metadata.customValidationRules) && metadata.customValidationRules.length > 0) {
+      metadata.customValidationRules.forEach(rule => {
+        combinedRules.push({
+          type: 'custom_validation_rule',
+          source: 'custom',
+          name: rule.name || 'Custom Rule',
+          description: rule.message || rule.description || '',
+          fields: rule.fields || [],
+          errorMessage: rule.message || '',
+          formula: rule.formula || null,
+          active: rule.active !== false
+        });
+      });
+    }
+
+    const commonRules = this.extractCommonRules(metadata);
+    combinedRules.push(...commonRules);
+
     chunks.push({
       id: `${objectName}_rules`,
       type: 'validation_rules',
       objectName,
       content: {
-        rules: this.extractCommonRules(metadata),
-        summary: 'Regras de validação e comportamentos especiais do objeto'
+        rules: combinedRules,
+        summary: `Regras de validação e comportamentos especiais (${combinedRules.length})`
       }
     });
 
@@ -141,8 +177,11 @@ class MetadataChunker {
     if (hasFirstName && hasLastName && hasName) {
       rules.push({
         type: 'name_composition',
+        source: 'common',
+        name: 'Composição do Nome',
         description: 'O campo Name é composto automaticamente de FirstName + LastName. Use FirstName e LastName separadamente, nunca preencha Name diretamente.',
-        fields: ['FirstName', 'LastName', 'Name']
+        fields: ['FirstName', 'LastName', 'Name'],
+        active: true
       });
     }
 
@@ -151,8 +190,11 @@ class MetadataChunker {
     if (emailFields.length > 0) {
       rules.push({
         type: 'email_validation',
+        source: 'common',
+        name: 'Validação de Email',
         description: 'Emails devem estar em formato válido (usuario@dominio.com)',
-        fields: emailFields.map(f => f.name)
+        fields: emailFields.map(f => f.name),
+        active: true
       });
     }
 
@@ -161,8 +203,11 @@ class MetadataChunker {
     if (urlFields.length > 0) {
       rules.push({
         type: 'url_validation',
+        source: 'common',
+        name: 'Validação de URL',
         description: 'URLs devem começar com http:// ou https://',
-        fields: urlFields.map(f => f.name)
+        fields: urlFields.map(f => f.name),
+        active: true
       });
     }
 
