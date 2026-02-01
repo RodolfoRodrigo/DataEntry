@@ -15,3 +15,6 @@ Browser Extension Manifest – extension configuration and permissions
 🧠 Project Purpose
 
 The main goal of this project is to demonstrate how to build a simple and extensible browser extension focused on data entry. It serves as a solid foundation for future enhancements, such as integrations with external APIs, form automation, or productivity tools, while keeping the structure clean and easy to maintain.
+
+
+<img width="1855" height="955" alt="image" src="https://github.com/user-attachments/assets/5e19b47f-b776-4a12-b5fa-b7956f93b430" />
