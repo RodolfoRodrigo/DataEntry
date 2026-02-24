@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard SOQL</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body { margin: 0; background: #f8fafc; font-family: Arial, sans-serif; }
+    .sb-wrap { padding: 16px; }
+    .sb-card { background: #fff; border-radius: 12px; box-shadow: 0 8px 24px rgba(15,23,42,.08); padding: 16px; }
+    .sb-title { margin: 0 0 8px; font-size: 18px; color: #0f172a; }
+    .sb-sub { margin: 0 0 12px; color: #475569; font-size: 13px; }
+    .sb-frame { width: 100%; min-height: calc(100vh - 110px); border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+    .sb-empty { color: #334155; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="sb-wrap">
+    <div class="sb-card">
+      <h1 class="sb-title">📈 Dashboard SOQL</h1>
+      <p class="sb-sub">Visualização isolada da extensão (sem CSP/CSS da página Salesforce).</p>
+      <p id="sb-empty" class="sb-empty" hidden>Nenhum dashboard foi gerado ainda. Volte ao painel SOQL, gere o HTML e tente novamente.</p>
+      <iframe id="sb-frame" class="sb-frame" title="Dashboard SOQL" sandbox="allow-scripts allow-forms allow-popups allow-downloads"></iframe>
+    </div>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>

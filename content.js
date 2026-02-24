@@ -41,13 +41,16 @@ function createInitialState() {
     isFlowOpen: false,
     isFlowMinimized: false,
     flowPosition: null,
-    flowHeight: null
+    flowHeight: null,
+    lastSoqlData: null,
+    generatedChartHtml: ''
   };
 }
 
 let currentState = createInitialState();
 
 function resetState() {
+  revokeChartPreviewObjectUrl();
   currentState = createInitialState();
   if (statePersistTimeout) {
     clearTimeout(statePersistTimeout);
@@ -57,7 +60,9 @@ function resetState() {
 }
 
 const STATE_STORAGE_KEY = 'sf_ai_assistant_state';
+const DASHBOARD_HTML_STORAGE_KEY = 'sf_ai_dashboard_html';
 let statePersistTimeout = null;
+let chartPreviewObjectUrl = null;
 
 function getSerializableLookupCache() {
   if (!currentState.lookupCache || !(currentState.lookupCache instanceof Map)) {
@@ -92,7 +97,9 @@ function getSerializableState() {
     isFlowOpen: currentState.isFlowOpen,
     isFlowMinimized: currentState.isFlowMinimized,
     flowPosition: currentState.flowPosition,
-    flowHeight: currentState.flowHeight
+    flowHeight: currentState.flowHeight,
+    lastSoqlData: currentState.lastSoqlData || null,
+    generatedChartHtml: currentState.generatedChartHtml || ''
   };
 }
 
@@ -102,7 +109,8 @@ function hasMeaningfulState(state) {
   const hasFields = state.fields && Object.keys(state.fields).length > 0;
   const hasResults = Array.isArray(state.resultsLog) && state.resultsLog.length > 0;
   const hasUIState = !!state.isFlowOpen || !!state.isFlowMinimized;
-  return hasRecords || hasFields || hasResults || !!state.transcription || hasUIState;
+  const hasSoqlArtifacts = !!state.lastSoqlData || !!state.generatedChartHtml;
+  return hasRecords || hasFields || hasResults || !!state.transcription || hasUIState || hasSoqlArtifacts;
 }
 
 function persistState() {
@@ -126,6 +134,14 @@ function persistState() {
     });
   } catch (error) {
     console.warn('Não foi possível salvar o estado da extensão:', error);
+  }
+}
+
+
+function revokeChartPreviewObjectUrl() {
+  if (chartPreviewObjectUrl) {
+    URL.revokeObjectURL(chartPreviewObjectUrl);
+    chartPreviewObjectUrl = null;
   }
 }
 
@@ -243,6 +259,10 @@ function rebuildUIFromState() {
 
   if (currentState.metadata) {
     renderFieldsEditor();
+  }
+
+  if (currentState.generatedChartHtml) {
+    renderChartPreview(currentState.generatedChartHtml);
   }
 
   if (Array.isArray(currentState.resultsLog) && currentState.resultsLog.length > 0) {
@@ -2102,30 +2122,320 @@ function showInsertError(error, record) {
   addChatMessage('ai', '❌ Não foi possível criar o registro. Verifique os detalhes exibidos.');
 }
 
-async function runSOQLQuery() {
+async function runSOQLQuery(queryOverride = null) {
   const textarea = document.getElementById('sf-soql-input');
-  const query = textarea ? textarea.value.trim() : '';
+  const query = (queryOverride || (textarea ? textarea.value : '') || '').trim();
   const resultDiv = document.getElementById('sf-soql-result');
   const contentDiv = document.getElementById('sf-soql-content');
 
   if (!query) {
     alert('Digite uma query SOQL');
-    return;
+    return null;
   }
+
+  setSoqlProcessing(true, 'Executando query SOQL...');
 
   try {
     if (resultDiv) resultDiv.classList.remove('sf-hidden');
     if (contentDiv) contentDiv.textContent = '⏳ Executando query...';
 
     const data = await runSoql(query);
+    currentState.lastSoqlData = data;
+    scheduleStatePersistence();
     if (contentDiv) {
       contentDiv.textContent = JSON.stringify(data, null, 2);
     }
+
+    return data;
   } catch (error) {
     if (contentDiv) {
       contentDiv.textContent = `❌ Erro: ${error.message}`;
     }
+    throw error;
+  } finally {
+    setSoqlProcessing(false);
   }
+}
+
+
+function setSoqlProcessing(isProcessing, message = 'Processando...') {
+  const processArea = document.getElementById('sf-soql-process');
+  const processText = document.getElementById('sf-soql-process-text');
+  const soqlButtons = ['sf-generate-soql', 'sf-generate-chart', 'sf-run-soql', 'sf-download-chart'];
+
+  if (processText) processText.textContent = message;
+  if (processArea) processArea.classList.toggle('sf-hidden', !isProcessing);
+
+  soqlButtons.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = isProcessing;
+  });
+}
+
+function extractFieldListFromSoql(soql) {
+  if (!soql) return [];
+  const match = soql.match(/select\s+([\s\S]+?)\s+from\s+/i);
+  if (!match) return [];
+  return match[1]
+    .split(',')
+    .map(field => field.trim())
+    .filter(Boolean)
+    .slice(0, 25);
+}
+
+function appendFieldToSoql(fieldName) {
+  const soqlInput = document.getElementById('sf-soql-input');
+  if (!soqlInput || !fieldName) return;
+
+  const current = soqlInput.value || '';
+  const fromMatch = current.match(/\sfrom\s/i);
+  if (!fromMatch) return;
+
+  const fromIndex = fromMatch.index;
+  const selectPart = current.slice(0, fromIndex);
+  const rest = current.slice(fromIndex);
+
+  const existingFields = extractFieldListFromSoql(current);
+  if (existingFields.some(f => f.toLowerCase() === fieldName.toLowerCase())) {
+    return;
+  }
+
+  const selectPrefixMatch = selectPart.match(/^\s*select\s+/i);
+  if (!selectPrefixMatch) return;
+  const prefix = selectPrefixMatch[0];
+  const fieldsText = selectPart.replace(/^\s*select\s+/i, '').trim();
+  const updatedFields = fieldsText ? `${fieldsText}, ${fieldName}` : fieldName;
+
+  soqlInput.value = `${prefix}${updatedFields} ${rest.trimStart()}`;
+}
+
+function renderSuggestedFields(fields = []) {
+  const container = document.getElementById('sf-soql-suggestions');
+  const chips = document.getElementById('sf-soql-suggestion-chips');
+  if (!container || !chips) return;
+
+  if (!Array.isArray(fields) || fields.length === 0) {
+    container.classList.add('sf-hidden');
+    chips.innerHTML = '';
+    return;
+  }
+
+  const unique = [...new Set(fields.map(v => String(v || '').trim()).filter(Boolean))].slice(0, 12);
+  if (unique.length === 0) {
+    container.classList.add('sf-hidden');
+    chips.innerHTML = '';
+    return;
+  }
+
+  chips.innerHTML = unique
+    .map(field => `<button class="sf-chip-btn" type="button" data-field="${field.replace(/"/g, '&quot;')}">+ ${field}</button>`)
+    .join('');
+
+  chips.querySelectorAll('.sf-chip-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      appendFieldToSoql(btn.dataset.field || '');
+    });
+  });
+
+  container.classList.remove('sf-hidden');
+}
+
+function buildFallbackDashboardHtml(request, soql, data) {
+  const safeRequest = JSON.stringify(request || 'Dashboard');
+  const safeSoql = JSON.stringify(soql || 'SOQL');
+  const safeData = JSON.stringify(data || {}, null, 2).replace(/</g, '\u003c');
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Salesforce</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f7f9fc; color: #1f2937; }
+    .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); margin-bottom: 16px; }
+    .bar { height: 28px; background: linear-gradient(90deg,#667eea,#764ba2); color:#fff; border-radius: 8px; margin: 8px 0; display:flex; align-items:center; padding:0 10px; font-size:12px; white-space:nowrap; overflow:hidden; }
+    pre { max-height: 300px; overflow:auto; background:#111827; color:#e5e7eb; padding:12px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card"><h2>📊 Dashboard Salesforce</h2><p><strong>Pedido:</strong> ${safeRequest}</p><p><strong>SOQL:</strong> ${safeSoql}</p></div>
+  <div class="card"><h3>Visualização rápida (Top 10)</h3><div id="bars"></div></div>
+  <div class="card"><h3>JSON da API</h3><pre id="json"></pre></div>
+  <script>
+    const data = ${safeData};
+    const records = Array.isArray(data?.records) ? data.records : [];
+    const numericKeys = records.length ? Object.keys(records[0]).filter(k => typeof records[0][k] === 'number') : [];
+    const labelKey = records.length ? (Object.keys(records[0]).find(k => /name|label|title/i.test(k)) || Object.keys(records[0])[0]) : 'item';
+    const valueKey = numericKeys[0] || null;
+    const bars = document.getElementById('bars');
+    const jsonEl = document.getElementById('json');
+    jsonEl.textContent = JSON.stringify(data, null, 2);
+    if (!records.length || !valueKey) {
+      bars.innerHTML = '<p>Sem dados numéricos suficientes para barras. Veja o JSON completo abaixo.</p>';
+    } else {
+      const top = records.slice(0, 10);
+      const max = Math.max(...top.map(r => Number(r[valueKey]) || 0), 1);
+      top.forEach(r => {
+        const value = Number(r[valueKey]) || 0;
+        const width = Math.max(5, Math.round((value / max) * 100));
+        const div = document.createElement('div');
+        div.className = 'bar';
+        div.style.width = width + '%';
+        div.textContent = (r[labelKey] ?? 'Item') + ': ' + value;
+        bars.appendChild(div);
+      });
+    }
+  </script>
+</body>
+</html>`;
+}
+
+
+
+
+function renderChartPreview(html) {
+  const chartResult = document.getElementById('sf-chart-result');
+  const chartFrame = document.getElementById('sf-chart-frame');
+  if (!chartResult || !chartFrame) return;
+
+  revokeChartPreviewObjectUrl();
+  const blob = new Blob([String(html || '')], { type: 'text/html;charset=utf-8' });
+  chartPreviewObjectUrl = URL.createObjectURL(blob);
+
+  chartResult.classList.remove('sf-hidden');
+  chartFrame.src = chartPreviewObjectUrl;
+}
+
+async function generateSOQLFromNaturalLanguage() {
+  const naturalInput = document.getElementById('sf-soql-natural-input');
+  const soqlInput = document.getElementById('sf-soql-input');
+  const request = naturalInput ? naturalInput.value.trim() : '';
+
+  if (!request) {
+    alert('Digite um pedido em linguagem natural.');
+    return;
+  }
+
+  if (!window.aiProcessor) {
+    await loadScripts();
+  }
+
+  if (!window.aiProcessor || !window.aiProcessor.generateSoqlFromNaturalRequest) {
+    alert('AI Processor indisponível para gerar SOQL.');
+    return;
+  }
+
+  setSoqlProcessing(true, 'Gerando SOQL com IA e executando query...');
+
+  try {
+    const result = await window.aiProcessor.generateSoqlFromNaturalRequest(request);
+    if (!result?.soql) {
+      throw new Error('A IA não retornou uma query SOQL válida.');
+    }
+
+    if (soqlInput) {
+      soqlInput.value = result.soql;
+    }
+
+    renderSuggestedFields(result.suggestedFields || extractFieldListFromSoql(result.soql));
+    addChatMessage('ai', `🧠 SOQL gerada automaticamente: ${result.soql}`);
+
+    await runSOQLQuery(result.soql);
+    addChatMessage('ai', '✅ Query executada automaticamente. Agora você pode gerar o dashboard HTML.');
+  } catch (error) {
+    alert(`Erro ao gerar/executar SOQL: ${error.message}`);
+  } finally {
+    setSoqlProcessing(false);
+  }
+}
+
+async function generateChartFromSoqlResult() {
+  const naturalInput = document.getElementById('sf-soql-natural-input');
+  const soqlInput = document.getElementById('sf-soql-input');
+  const request = naturalInput ? naturalInput.value.trim() : '';
+  const soql = soqlInput ? soqlInput.value.trim() : '';
+
+  if (!soql) {
+    alert('Gere ou informe uma query SOQL antes de criar o gráfico.');
+    return;
+  }
+
+  if (!currentState.lastSoqlData) {
+    alert('Execute a query SOQL primeiro para obter JSON da API.');
+    return;
+  }
+
+  if (!window.aiProcessor) {
+    await loadScripts();
+  }
+
+  if (!window.aiProcessor || !window.aiProcessor.generateChartHtmlFromData) {
+    alert('AI Processor indisponível para gerar gráfico HTML.');
+    return;
+  }
+
+  setSoqlProcessing(true, 'Gerando dashboard HTML com IA...');
+
+  try {
+    const response = await window.aiProcessor.generateChartHtmlFromData(
+      request || 'Gerar gráfico com base na query SOQL',
+      soql,
+      currentState.lastSoqlData
+    );
+
+    let html = response?.html;
+    if (!html || !/<!DOCTYPE html>/i.test(html)) {
+      html = buildFallbackDashboardHtml(request, soql, currentState.lastSoqlData);
+      addChatMessage('ai', '⚠️ IA não retornou HTML válido. Foi gerado um dashboard fallback automaticamente.');
+    }
+
+    currentState.generatedChartHtml = html;
+    scheduleStatePersistence();
+    renderChartPreview(html);
+    addChatMessage('ai', '📈 Dashboard HTML pronto a partir do JSON da API.');
+  } catch (error) {
+    const fallback = buildFallbackDashboardHtml(request, soql, currentState.lastSoqlData);
+    currentState.generatedChartHtml = fallback;
+    scheduleStatePersistence();
+    renderChartPreview(fallback);
+    addChatMessage('ai', `⚠️ Erro na geração por IA (${error.message}). Dashboard fallback foi criado.`);
+  } finally {
+    setSoqlProcessing(false);
+  }
+}
+
+function openGeneratedChartHtmlInNewTab() {
+  if (!currentState.generatedChartHtml) {
+    alert('Nenhum HTML de dashboard foi gerado ainda.');
+    return;
+  }
+
+  const runtime = typeof chrome !== 'undefined' ? chrome.runtime : null;
+  if (!runtime) {
+    alert('Runtime da extensão indisponível para abrir o dashboard.');
+    return;
+  }
+
+  chrome.storage.local.set({ [DASHBOARD_HTML_STORAGE_KEY]: currentState.generatedChartHtml }, () => {
+    if (chrome.runtime.lastError) {
+      alert(`Erro ao preparar dashboard: ${chrome.runtime.lastError.message}`);
+      return;
+    }
+
+    runtime.sendMessage({ message: 'openDashboardSidebar', active: true }, response => {
+      const lastError = chrome.runtime?.lastError;
+      if (lastError) {
+        alert(`Não foi possível abrir dashboard em nova aba: ${lastError.message}`);
+        return;
+      }
+
+      if (!response?.ok) {
+        const errorMsg = response?.error || 'Falha desconhecida ao abrir dashboard.';
+        alert(`Não foi possível abrir dashboard em nova aba: ${errorMsg}`);
+      }
+    });
+  });
 }
 
 // ============================================================
@@ -2181,6 +2491,9 @@ function injectFlowInterface() {
   document.getElementById('sf-minimize-flow').addEventListener('click', minimizeFlowUI);
   document.getElementById('sf-process-btn').addEventListener('click', processTranscriptionFull);
   document.getElementById('sf-run-soql').addEventListener('click', runSOQLQuery);
+  document.getElementById('sf-generate-soql').addEventListener('click', generateSOQLFromNaturalLanguage);
+  document.getElementById('sf-generate-chart').addEventListener('click', generateChartFromSoqlResult);
+  document.getElementById('sf-download-chart').addEventListener('click', openGeneratedChartHtmlInNewTab);
   document.getElementById('sf-submit-response').addEventListener('click', submitUserResponse);
   document.getElementById('sf-add-field').addEventListener('click', addNewFieldRow);
   document.getElementById('sf-cancel-process').addEventListener('click', cancelProcess);
@@ -2333,6 +2646,7 @@ function openFlowUI(options = {}) {
 }
 
 function closeFlowUI() {
+  revokeChartPreviewObjectUrl();
   const container = document.getElementById('sf-ai-flow-container');
   if (container) {
     container.classList.remove('active');

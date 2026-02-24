@@ -103,8 +103,29 @@
         <div class="sf-window-header">
           <h2 class="sf-window-title">🔍 SOQL Query</h2>
           <p class="sf-window-subtitle">
-            Execute consultas SOQL diretamente no Salesforce.
+            Peça em linguagem natural, rode a SOQL e gere um dashboard HTML com JSON da API.
           </p>
+        </div>
+
+        <div class="sf-input-group">
+          <label class="sf-input-label">Pedido em linguagem natural</label>
+          <textarea id="sf-soql-natural-input" class="sf-textarea" rows="3" placeholder="Ex: Quero ver as 10 contas com maior receita anual em gráfico de barras."></textarea>
+        </div>
+
+        <div id="sf-soql-suggestions" class="sf-hidden sf-soql-suggestions">
+          <div class="sf-input-label">Sugestões de campos (clique para adicionar na SOQL)</div>
+          <div id="sf-soql-suggestion-chips" class="sf-chip-list"></div>
+        </div>
+
+        <div class="sf-btn-group" style="margin-bottom: 16px;">
+          <button class="sf-btn sf-btn-secondary" id="sf-generate-soql" type="button">🧠 Gerar SOQL com IA</button>
+          <button class="sf-btn sf-btn-secondary" id="sf-generate-chart" type="button">📈 Gerar gráfico HTML com IA</button>
+          <button class="sf-btn sf-btn-secondary" id="sf-download-chart" type="button">🌐 Abrir dashboard em nova aba</button>
+        </div>
+
+        <div id="sf-soql-process" class="sf-soql-process sf-hidden">
+          <div class="sf-spinner sf-spinner-sm"></div>
+          <span id="sf-soql-process-text">Processando...</span>
         </div>
 
         <div class="sf-input-group">
@@ -120,6 +141,13 @@
           <div class="sf-card">
             <div class="sf-card-title">📊 Resultado</div>
             <pre class="sf-card-content sf-pre-scroll" id="sf-soql-content"></pre>
+          </div>
+        </div>
+
+        <div id="sf-chart-result" class="sf-hidden sf-section-spacing">
+          <div class="sf-card">
+            <div class="sf-card-title">🖼️ Preview do Dashboard HTML</div>
+            <iframe id="sf-chart-frame" class="sf-chart-frame" title="Preview do gráfico" sandbox="allow-scripts allow-forms allow-popups allow-downloads"></iframe>
           </div>
         </div>
       </div>
