@@ -61,6 +61,60 @@ class AIProcessor {
     return JSON.parse(data.choices[0].message.content);
   }
 
+
+
+  async generateSoqlFromNaturalRequest(request) {
+    const messages = [
+      {
+        role: 'system',
+        content: `Você é especialista em Salesforce SOQL. Converta pedidos em linguagem natural para uma query SOQL válida.
+
+REGRAS:
+1. Retorne APENAS JSON válido.
+2. Nunca inclua markdown.
+3. Priorize campos comuns (Id, Name, CreatedDate, Amount, StageName, Industry, AnnualRevenue) conforme contexto.
+4. Sempre inclua LIMIT quando o usuário não informar.
+
+Formato de saída:
+{
+  "soql": "SELECT Id, Name FROM Account LIMIT 10",
+  "explanation": "Resumo curto da consulta"
+}`
+      },
+      {
+        role: 'user',
+        content: `Pedido: ${request}`
+      }
+    ];
+
+    return await this.callGPT(messages, 0.1);
+  }
+
+  async generateChartHtmlFromData(request, soql, data) {
+    const serializedData = JSON.stringify(data || {}, null, 2);
+
+    const messages = [
+      {
+        role: 'system',
+        content: `Você é um especialista em front-end. Gere um HTML completo com CSS e JavaScript para visualizar dados JSON em gráfico.
+
+REGRAS OBRIGATÓRIAS:
+1. Retorne APENAS JSON válido no formato {"html":"..."}.
+2. O campo html deve conter um documento HTML completo (<!DOCTYPE html> ...).
+3. Não use bibliotecas externas/CDN. Use apenas HTML/CSS/JS puro e SVG/Canvas nativo.
+4. O gráfico deve ser legível, moderno e com título, legenda e tabela-resumo opcional.
+5. Escape corretamente quebras de linha para JSON válido.
+6. Considere que os dados estão disponíveis dentro do próprio HTML (embutidos).`
+      },
+      {
+        role: 'user',
+        content: `Pedido do usuário: ${request}\n\nSOQL executada: ${soql}\n\nJSON da API Salesforce:\n${serializedData}`
+      }
+    ];
+
+    return await this.callGPT(messages, 0.2);
+  }
+
   async transcribeAudio(audioBlob, filename = 'audio.webm') {
     const settings = await chrome.storage.sync.get(['openai_api_key', 'transcription_language']);
     if (settings.openai_api_key) {

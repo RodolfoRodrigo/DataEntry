@@ -742,3 +742,12 @@
 .sf-ai-assistant-fab--pressed {
   transform: scale(0.92);
 }
+
+
+.sf-chart-frame {
+  width: 100%;
+  height: 360px;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  background: #ffffff;
+}

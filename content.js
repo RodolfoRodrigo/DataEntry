@@ -41,7 +41,9 @@ function createInitialState() {
     isFlowOpen: false,
     isFlowMinimized: false,
     flowPosition: null,
-    flowHeight: null
+    flowHeight: null,
+    lastSoqlData: null,
+    generatedChartHtml: ''
   };
 }
 
@@ -92,7 +94,9 @@ function getSerializableState() {
     isFlowOpen: currentState.isFlowOpen,
     isFlowMinimized: currentState.isFlowMinimized,
     flowPosition: currentState.flowPosition,
-    flowHeight: currentState.flowHeight
+    flowHeight: currentState.flowHeight,
+    lastSoqlData: currentState.lastSoqlData || null,
+    generatedChartHtml: currentState.generatedChartHtml || ''
   };
 }
 
@@ -102,7 +106,8 @@ function hasMeaningfulState(state) {
   const hasFields = state.fields && Object.keys(state.fields).length > 0;
   const hasResults = Array.isArray(state.resultsLog) && state.resultsLog.length > 0;
   const hasUIState = !!state.isFlowOpen || !!state.isFlowMinimized;
-  return hasRecords || hasFields || hasResults || !!state.transcription || hasUIState;
+  const hasSoqlArtifacts = !!state.lastSoqlData || !!state.generatedChartHtml;
+  return hasRecords || hasFields || hasResults || !!state.transcription || hasUIState || hasSoqlArtifacts;
 }
 
 function persistState() {
@@ -243,6 +248,10 @@ function rebuildUIFromState() {
 
   if (currentState.metadata) {
     renderFieldsEditor();
+  }
+
+  if (currentState.generatedChartHtml) {
+    renderChartPreview(currentState.generatedChartHtml);
   }
 
   if (Array.isArray(currentState.resultsLog) && currentState.resultsLog.length > 0) {
@@ -2118,6 +2127,8 @@ async function runSOQLQuery() {
     if (contentDiv) contentDiv.textContent = '⏳ Executando query...';
 
     const data = await runSoql(query);
+    currentState.lastSoqlData = data;
+    scheduleStatePersistence();
     if (contentDiv) {
       contentDiv.textContent = JSON.stringify(data, null, 2);
     }
@@ -2126,6 +2137,122 @@ async function runSOQLQuery() {
       contentDiv.textContent = `❌ Erro: ${error.message}`;
     }
   }
+}
+
+
+
+function escapeHtmlForIframeDoc(html) {
+  return String(html || '').replace(/<\/script>/gi, '<\\/script>');
+}
+
+function renderChartPreview(html) {
+  const chartResult = document.getElementById('sf-chart-result');
+  const chartFrame = document.getElementById('sf-chart-frame');
+  if (!chartResult || !chartFrame) return;
+
+  chartResult.classList.remove('sf-hidden');
+  chartFrame.srcdoc = escapeHtmlForIframeDoc(html);
+}
+
+async function generateSOQLFromNaturalLanguage() {
+  const naturalInput = document.getElementById('sf-soql-natural-input');
+  const soqlInput = document.getElementById('sf-soql-input');
+  const request = naturalInput ? naturalInput.value.trim() : '';
+
+  if (!request) {
+    alert('Digite um pedido em linguagem natural.');
+    return;
+  }
+
+  if (!window.aiProcessor) {
+    await loadScripts();
+  }
+
+  if (!window.aiProcessor || !window.aiProcessor.generateSoqlFromNaturalRequest) {
+    alert('AI Processor indisponível para gerar SOQL.');
+    return;
+  }
+
+  try {
+    const result = await window.aiProcessor.generateSoqlFromNaturalRequest(request);
+    if (!result?.soql) {
+      throw new Error('A IA não retornou uma query SOQL válida.');
+    }
+
+    if (soqlInput) {
+      soqlInput.value = result.soql;
+    }
+
+    addChatMessage('ai', `🧠 SOQL gerada: ${result.soql}`);
+  } catch (error) {
+    alert(`Erro ao gerar SOQL: ${error.message}`);
+  }
+}
+
+async function generateChartFromSoqlResult() {
+  const naturalInput = document.getElementById('sf-soql-natural-input');
+  const soqlInput = document.getElementById('sf-soql-input');
+  const request = naturalInput ? naturalInput.value.trim() : '';
+  const soql = soqlInput ? soqlInput.value.trim() : '';
+
+  if (!soql) {
+    alert('Gere ou informe uma query SOQL antes de criar o gráfico.');
+    return;
+  }
+
+  if (!currentState.lastSoqlData) {
+    alert('Execute a query SOQL primeiro para obter JSON da API.');
+    return;
+  }
+
+  if (!window.aiProcessor) {
+    await loadScripts();
+  }
+
+  if (!window.aiProcessor || !window.aiProcessor.generateChartHtmlFromData) {
+    alert('AI Processor indisponível para gerar gráfico HTML.');
+    return;
+  }
+
+  try {
+    const response = await window.aiProcessor.generateChartHtmlFromData(
+      request || 'Gerar gráfico com base na query SOQL',
+      soql,
+      currentState.lastSoqlData
+    );
+
+    const html = response?.html;
+    if (!html || !/<!DOCTYPE html>/i.test(html)) {
+      throw new Error('A IA não retornou um HTML completo válido.');
+    }
+
+    currentState.generatedChartHtml = html;
+    scheduleStatePersistence();
+    renderChartPreview(html);
+    addChatMessage('ai', '📈 Dashboard HTML gerado com sucesso a partir do JSON da API.');
+  } catch (error) {
+    alert(`Erro ao gerar gráfico HTML: ${error.message}`);
+  }
+}
+
+function downloadGeneratedChartHtml() {
+  if (!currentState.generatedChartHtml) {
+    alert('Nenhum HTML de gráfico foi gerado ainda.');
+    return;
+  }
+
+  const blob = new Blob([currentState.generatedChartHtml], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+  anchor.href = url;
+  anchor.download = `salesforce-soql-dashboard-${timestamp}.html`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ============================================================
@@ -2181,6 +2308,9 @@ function injectFlowInterface() {
   document.getElementById('sf-minimize-flow').addEventListener('click', minimizeFlowUI);
   document.getElementById('sf-process-btn').addEventListener('click', processTranscriptionFull);
   document.getElementById('sf-run-soql').addEventListener('click', runSOQLQuery);
+  document.getElementById('sf-generate-soql').addEventListener('click', generateSOQLFromNaturalLanguage);
+  document.getElementById('sf-generate-chart').addEventListener('click', generateChartFromSoqlResult);
+  document.getElementById('sf-download-chart').addEventListener('click', downloadGeneratedChartHtml);
   document.getElementById('sf-submit-response').addEventListener('click', submitUserResponse);
   document.getElementById('sf-add-field').addEventListener('click', addNewFieldRow);
   document.getElementById('sf-cancel-process').addEventListener('click', cancelProcess);
