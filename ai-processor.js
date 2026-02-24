@@ -60,6 +60,69 @@ class AIProcessor {
     return JSON.parse(data.choices[0].message.content);
   }
 
+
+
+  async generateSOQLFromNaturalLanguage(prompt) {
+    const messages = [
+      {
+        role: 'system',
+        content: `Você é especialista em Salesforce SOQL.
+Converta o pedido em linguagem natural para uma query SOQL válida.
+Responda SOMENTE em JSON no formato:
+{
+  "query": "SELECT ...",
+  "reasoning": "resumo curto",
+  "confidence": 0.0
+}
+Regras:
+- Retorne apenas SELECT (sem UPDATE/DELETE)
+- Use LIMIT 200 quando não informado
+- Prefira campos comuns (Id, Name, StageName, Amount, CreatedDate, Status)
+- Não use markdown.`
+      },
+      {
+        role: 'user',
+        content: `Pedido: ${prompt}`
+      }
+    ];
+
+    return await this.callGPT(messages, 0.1);
+  }
+
+  async generateChartHtml({ prompt, query, result }) {
+    const safeResult = {
+      totalSize: result?.totalSize,
+      done: result?.done,
+      records: Array.isArray(result?.records) ? result.records.slice(0, 200) : []
+    };
+
+    const messages = [
+      {
+        role: 'system',
+        content: `Você é um especialista em visualização de dados.
+Gere uma página HTML completa (com CSS + JavaScript inline) para exibir um gráfico usando Chart.js via CDN.
+Use os dados JSON fornecidos para montar um gráfico útil automaticamente.
+Retorne JSON no formato:
+{
+  "title": "Título do gráfico",
+  "html": "<!DOCTYPE html>..."
+}
+Regras obrigatórias:
+- HTML completo e autoexecutável
+- Incluir <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+- Exibir também uma tabela simples com os dados usados
+- Não use markdown, apenas JSON.`
+      },
+      {
+        role: 'user',
+        content: `Contexto do usuário (opcional): ${prompt || 'sem contexto'}
+SOQL: ${query || 'não informado'}
+Resultado JSON da API: ${JSON.stringify(safeResult)}`
+      }
+    ];
+
+    return await this.callGPT(messages, 0.2);
+  }
   async identifyObject(transcription) {
     const messages = [
       {

@@ -585,11 +585,21 @@
       <!-- ===== ABA SOQL ===== -->
       <div id="soql-tab" class="tab-content">
         <div class="input-group">
+          <label>🗣️ Pedido em linguagem natural</label>
+          <textarea id="naturalSoql" rows="4" placeholder="Ex: Mostre as 10 maiores oportunidades abertas por estágio para gerar um gráfico de barras"></textarea>
+        </div>
+        <button id="generateSoql" class="btn btn-secondary">✨ Gerar SOQL com IA</button>
+
+        <div class="input-group">
           <label>🔍 Query SOQL</label>
           <textarea id="query" rows="5">SELECT Id, Name FROM Account LIMIT 5</textarea>
         </div>
         <button id="runQuery" class="btn btn-primary">▶️ Executar Query</button>
+        <button id="generateChart" class="btn btn-secondary">📊 Gerar gráfico HTML (IA)</button>
+        <button id="saveChart" class="btn btn-secondary">💾 Salvar HTML do gráfico</button>
+        <iframe id="chartPreview" class="result-box hidden" style="width:100%; min-height:240px; border:1px solid #e9ecef; background:#fff; margin-top:12px;"></iframe>
         <div id="queryResult" class="result-box hidden"></div>
+        <div id="chartCode" class="result-box hidden"></div>
       </div>
     </div>
   </div>

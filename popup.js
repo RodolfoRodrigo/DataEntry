@@ -7,7 +7,9 @@ const appState = {
   metadata: null,
   validationResult: null,
   questions: [],
-  lookupCache: new Map() // Cache de buscas lookup
+  lookupCache: new Map(), // Cache de buscas lookup
+  lastSoqlResult: null,
+  lastChartHtml: ''
 };
 
 // ============================================================
@@ -42,7 +44,10 @@ function setupEventListeners() {
   document.getElementById('addFieldBtn').addEventListener('click', addNewFieldRow);
   
   // SOQL
+  document.getElementById('generateSoql').addEventListener('click', generateSOQLFromNaturalLanguage);
   document.getElementById('runQuery').addEventListener('click', runSOQL);
+  document.getElementById('generateChart').addEventListener('click', generateChartFromResult);
+  document.getElementById('saveChart').addEventListener('click', saveChartHtml);
 }
 
 function switchTab(tabName) {
@@ -865,8 +870,104 @@ async function runSOQL() {
   }
 }
 
+
+
+async function generateSOQLFromNaturalLanguage() {
+  const prompt = document.getElementById('naturalSoql').value.trim();
+  const queryResult = document.getElementById('queryResult');
+
+  if (!prompt) {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = 'Descreva em linguagem natural o que deseja consultar.';
+    return;
+  }
+
+  try {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = '✨ Gerando SOQL com IA...';
+
+    const generated = await window.aiProcessor.generateSOQLFromNaturalLanguage(prompt);
+    document.getElementById('query').value = generated.query || '';
+    queryResult.textContent = `SOQL gerada (${generated.confidence || 'sem confiança'}):\n${generated.query}`;
+  } catch (error) {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = `❌ Erro ao gerar SOQL: ${error.message}`;
+  }
+}
+
+async function generateChartFromResult() {
+  const queryResult = document.getElementById('queryResult');
+  const chartCode = document.getElementById('chartCode');
+  const chartPreview = document.getElementById('chartPreview');
+
+  if (!appState.lastSoqlResult || !Array.isArray(appState.lastSoqlResult.records)) {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = 'Execute uma SOQL primeiro para gerar o gráfico.';
+    return;
+  }
+
+  try {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = '📊 Gerando HTML/CSS/JS do gráfico com IA...';
+
+    const naturalPrompt = document.getElementById('naturalSoql').value.trim();
+    const chart = await window.aiProcessor.generateChartHtml({
+      prompt: naturalPrompt,
+      query: document.getElementById('query').value.trim(),
+      result: appState.lastSoqlResult
+    });
+
+    const html = chart.html || '';
+    appState.lastChartHtml = html;
+
+    chartPreview.classList.remove('hidden');
+    chartPreview.srcdoc = html;
+
+    chartCode.classList.remove('hidden');
+    chartCode.textContent = html;
+
+    queryResult.textContent = '✅ Gráfico gerado. Pré-visualização e código HTML disponíveis abaixo.';
+  } catch (error) {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = `❌ Erro ao gerar gráfico: ${error.message}`;
+  }
+}
+
+async function saveChartHtml() {
+  const queryResult = document.getElementById('queryResult');
+
+  if (!appState.lastChartHtml) {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = 'Gere um gráfico primeiro para salvar o HTML.';
+    return;
+  }
+
+  try {
+    const filename = `salesforce-chart-${Date.now()}.html`;
+
+    const { saved_chart_html = [] } = await chrome.storage.local.get('saved_chart_html');
+    const updated = [{ filename, html: appState.lastChartHtml, createdAt: new Date().toISOString() }, ...saved_chart_html].slice(0, 20);
+    await chrome.storage.local.set({ saved_chart_html: updated });
+
+    const blob = new Blob([appState.lastChartHtml], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = `💾 HTML salvo no storage local e baixado como ${filename}.`;
+  } catch (error) {
+    queryResult.classList.remove('hidden');
+    queryResult.textContent = `❌ Erro ao salvar HTML: ${error.message}`;
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'SOQL_RESULT') {
+    appState.lastSoqlResult = msg.data;
     document.getElementById('queryResult').classList.remove('hidden');
     document.getElementById('queryResult').textContent = JSON.stringify(msg.data, null, 2);
   } else if (msg.type === 'SOQL_ERROR') {
