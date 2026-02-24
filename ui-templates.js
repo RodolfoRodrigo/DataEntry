@@ -120,7 +120,12 @@
         <div class="sf-btn-group" style="margin-bottom: 16px;">
           <button class="sf-btn sf-btn-secondary" id="sf-generate-soql" type="button">🧠 Gerar SOQL com IA</button>
           <button class="sf-btn sf-btn-secondary" id="sf-generate-chart" type="button">📈 Gerar gráfico HTML com IA</button>
-          <button class="sf-btn sf-btn-secondary" id="sf-download-chart" type="button">💾 Baixar HTML</button>
+          <button class="sf-btn sf-btn-secondary" id="sf-download-chart" type="button">🌐 Abrir dashboard em nova aba</button>
+        </div>
+
+        <div id="sf-soql-process" class="sf-soql-process sf-hidden">
+          <div class="sf-spinner sf-spinner-sm"></div>
+          <span id="sf-soql-process-text">Processando...</span>
         </div>
 
         <div class="sf-input-group">

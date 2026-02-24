@@ -2122,6 +2122,8 @@ async function runSOQLQuery(queryOverride = null) {
     return null;
   }
 
+  setSoqlProcessing(true, 'Executando query SOQL...');
+
   try {
     if (resultDiv) resultDiv.classList.remove('sf-hidden');
     if (contentDiv) contentDiv.textContent = '⏳ Executando query...';
@@ -2139,7 +2141,24 @@ async function runSOQLQuery(queryOverride = null) {
       contentDiv.textContent = `❌ Erro: ${error.message}`;
     }
     throw error;
+  } finally {
+    setSoqlProcessing(false);
   }
+}
+
+
+function setSoqlProcessing(isProcessing, message = 'Processando...') {
+  const processArea = document.getElementById('sf-soql-process');
+  const processText = document.getElementById('sf-soql-process-text');
+  const soqlButtons = ['sf-generate-soql', 'sf-generate-chart', 'sf-run-soql', 'sf-download-chart'];
+
+  if (processText) processText.textContent = message;
+  if (processArea) processArea.classList.toggle('sf-hidden', !isProcessing);
+
+  soqlButtons.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = isProcessing;
+  });
 }
 
 function extractFieldListFromSoql(soql) {
@@ -2296,6 +2315,8 @@ async function generateSOQLFromNaturalLanguage() {
     return;
   }
 
+  setSoqlProcessing(true, 'Gerando SOQL com IA e executando query...');
+
   try {
     const result = await window.aiProcessor.generateSoqlFromNaturalRequest(request);
     if (!result?.soql) {
@@ -2313,6 +2334,8 @@ async function generateSOQLFromNaturalLanguage() {
     addChatMessage('ai', '✅ Query executada automaticamente. Agora você pode gerar o dashboard HTML.');
   } catch (error) {
     alert(`Erro ao gerar/executar SOQL: ${error.message}`);
+  } finally {
+    setSoqlProcessing(false);
   }
 }
 
@@ -2341,6 +2364,8 @@ async function generateChartFromSoqlResult() {
     return;
   }
 
+  setSoqlProcessing(true, 'Gerando dashboard HTML com IA...');
+
   try {
     const response = await window.aiProcessor.generateChartHtmlFromData(
       request || 'Gerar gráfico com base na query SOQL',
@@ -2364,27 +2389,22 @@ async function generateChartFromSoqlResult() {
     scheduleStatePersistence();
     renderChartPreview(fallback);
     addChatMessage('ai', `⚠️ Erro na geração por IA (${error.message}). Dashboard fallback foi criado.`);
+  } finally {
+    setSoqlProcessing(false);
   }
 }
 
-function downloadGeneratedChartHtml() {
+function openGeneratedChartHtmlInNewTab() {
   if (!currentState.generatedChartHtml) {
-    alert('Nenhum HTML de gráfico foi gerado ainda.');
+    alert('Nenhum HTML de dashboard foi gerado ainda.');
     return;
   }
 
   const blob = new Blob([currentState.generatedChartHtml], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  window.open(url, '_blank', 'noopener,noreferrer');
 
-  anchor.href = url;
-  anchor.download = `salesforce-soql-dashboard-${timestamp}.html`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
 }
 
 // ============================================================
@@ -2442,7 +2462,7 @@ function injectFlowInterface() {
   document.getElementById('sf-run-soql').addEventListener('click', runSOQLQuery);
   document.getElementById('sf-generate-soql').addEventListener('click', generateSOQLFromNaturalLanguage);
   document.getElementById('sf-generate-chart').addEventListener('click', generateChartFromSoqlResult);
-  document.getElementById('sf-download-chart').addEventListener('click', downloadGeneratedChartHtml);
+  document.getElementById('sf-download-chart').addEventListener('click', openGeneratedChartHtmlInNewTab);
   document.getElementById('sf-submit-response').addEventListener('click', submitUserResponse);
   document.getElementById('sf-add-field').addEventListener('click', addNewFieldRow);
   document.getElementById('sf-cancel-process').addEventListener('click', cancelProcess);
