@@ -60,6 +60,7 @@ function resetState() {
 }
 
 const STATE_STORAGE_KEY = 'sf_ai_assistant_state';
+const DASHBOARD_HTML_STORAGE_KEY = 'sf_ai_dashboard_html';
 let statePersistTimeout = null;
 let chartPreviewObjectUrl = null;
 
@@ -2410,11 +2411,31 @@ function openGeneratedChartHtmlInNewTab() {
     return;
   }
 
-  const blob = new Blob([currentState.generatedChartHtml], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  window.open(url, '_blank', 'noopener,noreferrer');
+  const runtime = typeof chrome !== 'undefined' ? chrome.runtime : null;
+  if (!runtime) {
+    alert('Runtime da extensão indisponível para abrir o dashboard.');
+    return;
+  }
 
-  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+  chrome.storage.local.set({ [DASHBOARD_HTML_STORAGE_KEY]: currentState.generatedChartHtml }, () => {
+    if (chrome.runtime.lastError) {
+      alert(`Erro ao preparar dashboard: ${chrome.runtime.lastError.message}`);
+      return;
+    }
+
+    runtime.sendMessage({ message: 'openDashboardSidebar', active: true }, response => {
+      const lastError = chrome.runtime?.lastError;
+      if (lastError) {
+        alert(`Não foi possível abrir dashboard em nova aba: ${lastError.message}`);
+        return;
+      }
+
+      if (!response?.ok) {
+        const errorMsg = response?.error || 'Falha desconhecida ao abrir dashboard.';
+        alert(`Não foi possível abrir dashboard em nova aba: ${errorMsg}`);
+      }
+    });
+  });
 }
 
 // ============================================================

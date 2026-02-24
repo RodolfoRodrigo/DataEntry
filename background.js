@@ -155,6 +155,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return;
       }
 
+
+      if (request.message === "openDashboardSidebar") {
+        const sidebarUrl = chrome.runtime.getURL('sidebar.html');
+        await new Promise(resolve => {
+          chrome.tabs.create({ url: sidebarUrl, active: request.active !== false }, tab => {
+            if (chrome.runtime.lastError) {
+              sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+            } else {
+              sendResponse({ ok: true, tabId: tab?.id ?? null });
+            }
+            resolve();
+          });
+        });
+        return;
+      }
+
       if (request.message === "openRecordTab") {
         if (!request.url) {
           sendResponse({ ok: false, error: "Missing URL" });
