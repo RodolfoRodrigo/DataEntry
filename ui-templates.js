@@ -147,7 +147,7 @@
         <div id="sf-chart-result" class="sf-hidden sf-section-spacing">
           <div class="sf-card">
             <div class="sf-card-title">🖼️ Preview do Dashboard HTML</div>
-            <iframe id="sf-chart-frame" class="sf-chart-frame" title="Preview do gráfico"></iframe>
+            <iframe id="sf-chart-frame" class="sf-chart-frame" title="Preview do gráfico" sandbox="allow-scripts allow-forms allow-popups allow-downloads"></iframe>
           </div>
         </div>
       </div>

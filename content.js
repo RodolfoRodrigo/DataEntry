@@ -50,6 +50,7 @@ function createInitialState() {
 let currentState = createInitialState();
 
 function resetState() {
+  revokeChartPreviewObjectUrl();
   currentState = createInitialState();
   if (statePersistTimeout) {
     clearTimeout(statePersistTimeout);
@@ -60,6 +61,7 @@ function resetState() {
 
 const STATE_STORAGE_KEY = 'sf_ai_assistant_state';
 let statePersistTimeout = null;
+let chartPreviewObjectUrl = null;
 
 function getSerializableLookupCache() {
   if (!currentState.lookupCache || !(currentState.lookupCache instanceof Map)) {
@@ -131,6 +133,14 @@ function persistState() {
     });
   } catch (error) {
     console.warn('Não foi possível salvar o estado da extensão:', error);
+  }
+}
+
+
+function revokeChartPreviewObjectUrl() {
+  if (chartPreviewObjectUrl) {
+    URL.revokeObjectURL(chartPreviewObjectUrl);
+    chartPreviewObjectUrl = null;
   }
 }
 
@@ -2283,17 +2293,17 @@ function buildFallbackDashboardHtml(request, soql, data) {
 
 
 
-function escapeHtmlForIframeDoc(html) {
-  return String(html || '').replace(/<\/script>/gi, '<\\/script>');
-}
-
 function renderChartPreview(html) {
   const chartResult = document.getElementById('sf-chart-result');
   const chartFrame = document.getElementById('sf-chart-frame');
   if (!chartResult || !chartFrame) return;
 
+  revokeChartPreviewObjectUrl();
+  const blob = new Blob([String(html || '')], { type: 'text/html;charset=utf-8' });
+  chartPreviewObjectUrl = URL.createObjectURL(blob);
+
   chartResult.classList.remove('sf-hidden');
-  chartFrame.srcdoc = escapeHtmlForIframeDoc(html);
+  chartFrame.src = chartPreviewObjectUrl;
 }
 
 async function generateSOQLFromNaturalLanguage() {
@@ -2615,6 +2625,7 @@ function openFlowUI(options = {}) {
 }
 
 function closeFlowUI() {
+  revokeChartPreviewObjectUrl();
   const container = document.getElementById('sf-ai-flow-container');
   if (container) {
     container.classList.remove('active');
