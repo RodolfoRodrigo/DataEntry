@@ -112,6 +112,11 @@
           <textarea id="sf-soql-natural-input" class="sf-textarea" rows="3" placeholder="Ex: Quero ver as 10 contas com maior receita anual em gráfico de barras."></textarea>
         </div>
 
+        <div id="sf-soql-suggestions" class="sf-hidden sf-soql-suggestions">
+          <div class="sf-input-label">Sugestões de campos (clique para adicionar na SOQL)</div>
+          <div id="sf-soql-suggestion-chips" class="sf-chip-list"></div>
+        </div>
+
         <div class="sf-btn-group" style="margin-bottom: 16px;">
           <button class="sf-btn sf-btn-secondary" id="sf-generate-soql" type="button">🧠 Gerar SOQL com IA</button>
           <button class="sf-btn sf-btn-secondary" id="sf-generate-chart" type="button">📈 Gerar gráfico HTML com IA</button>

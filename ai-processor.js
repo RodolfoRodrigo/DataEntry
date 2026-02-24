@@ -33,9 +33,20 @@ class AIProcessor {
     await chrome.storage.local.set({ metadata_cache: cacheObj });
   }
 
-  async callGPT(messages, temperature = 0.3) {
+  async callGPT(messages, temperature = 0.3, options = {}) {
     if (!this.apiKey) {
       throw new Error('API Key do OpenAI não configurada. Vá em Opções para configurar.');
+    }
+
+    const payload = {
+      model: options.model || 'gpt-4o',
+      messages,
+      temperature,
+      response_format: { type: 'json_object' }
+    };
+
+    if (Number.isFinite(options.max_tokens)) {
+      payload.max_tokens = options.max_tokens;
     }
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -44,12 +55,7 @@ class AIProcessor {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.apiKey}`
       },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        messages,
-        temperature,
-        response_format: { type: "json_object" }
-      })
+      body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
@@ -78,7 +84,8 @@ REGRAS:
 Formato de saída:
 {
   "soql": "SELECT Id, Name FROM Account LIMIT 10",
-  "explanation": "Resumo curto da consulta"
+  "explanation": "Resumo curto da consulta",
+  "suggestedFields": ["Name", "CreatedDate", "AnnualRevenue"]
 }`
       },
       {
@@ -87,7 +94,7 @@ Formato de saída:
       }
     ];
 
-    return await this.callGPT(messages, 0.1);
+    return await this.callGPT(messages, 0.1, { model: 'gpt-4o' });
   }
 
   async generateChartHtmlFromData(request, soql, data) {
@@ -99,12 +106,14 @@ Formato de saída:
         content: `Você é um especialista em front-end. Gere um HTML completo com CSS e JavaScript para visualizar dados JSON em gráfico.
 
 REGRAS OBRIGATÓRIAS:
-1. Retorne APENAS JSON válido no formato {"html":"..."}.
+1. Retorne APENAS JSON válido no formato {"html":"...", "chartType":"..."}.
 2. O campo html deve conter um documento HTML completo (<!DOCTYPE html> ...).
 3. Não use bibliotecas externas/CDN. Use apenas HTML/CSS/JS puro e SVG/Canvas nativo.
 4. O gráfico deve ser legível, moderno e com título, legenda e tabela-resumo opcional.
 5. Escape corretamente quebras de linha para JSON válido.
-6. Considere que os dados estão disponíveis dentro do próprio HTML (embutidos).`
+6. Considere que os dados estão disponíveis dentro do próprio HTML (embutidos).
+7. Priorize gráficos de barras/linha/pizza com tratamento para dados vazios.
+8. O HTML deve funcionar sozinho ao abrir localmente em qualquer navegador moderno.`
       },
       {
         role: 'user',
@@ -112,7 +121,7 @@ REGRAS OBRIGATÓRIAS:
       }
     ];
 
-    return await this.callGPT(messages, 0.2);
+    return await this.callGPT(messages, 0.05, { model: 'gpt-4o', max_tokens: 7000 });
   }
 
   async transcribeAudio(audioBlob, filename = 'audio.webm') {

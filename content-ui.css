@@ -751,3 +751,32 @@
   border-radius: 10px;
   background: #ffffff;
 }
+
+
+.sf-soql-suggestions {
+  margin-bottom: 16px;
+  background: #ffffff;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.sf-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sf-chip-btn {
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #4338ca;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sf-chip-btn:hover {
+  background: #e0e7ff;
+}
